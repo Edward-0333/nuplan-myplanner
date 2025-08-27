@@ -13,7 +13,7 @@ from nuplan.planning.script.builders.worker_pool_builder import build_worker
 from nuplan.planning.script.profiler_context_manager import ProfilerContextManager
 from nuplan.planning.script.utils import set_default_path
 from nuplan.planning.training.experiments.caching import cache_data
-from nuplan.planning.training.experiments.training import TrainingEngine, build_training_engine
+from src.training.experments.training import TrainingEngine, build_training_engine
 
 logging.getLogger('numba').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)

@@ -1,0 +1,12 @@
+# @package _global_
+job_name: tt
+py_func: train
+objective_aggregate_mode: mean
+
+defaults:
+        - override /data_augmentation:
+        - override /splitter: nuplan
+        - override /model: tt_model
+        - override /scenario_filter: training_scenarios
+        - override /trainer: tt_trainer
+        - override /lightning: tt_lightning

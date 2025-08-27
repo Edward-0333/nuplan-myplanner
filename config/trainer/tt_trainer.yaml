@@ -1,0 +1,2 @@
+_target_: src.training.modeling.models.tt_trainer.LightningTrainer
+
