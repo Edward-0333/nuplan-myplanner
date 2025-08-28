@@ -53,3 +53,8 @@ cache:
 
 # Mandatory parameters
 py_func: cache                                           # Function to be run inside main (can be "train", "test", "cache")
+epochs: 25
+warmup_epochs: 3
+lr: 1e-3
+weight_decay: 0.0001
+checkpoint:
