@@ -6,4 +6,9 @@ _convert_: 'all'
 feature_builder:
   _target_: src.training.preprocessing.feature_builders.tt_feature_builder.TTFeatureBuilder
   _convert_: "all"
+  radius: 120
+  history_horizon: 2
+  future_horizon: 8
+  sample_interval: 0.1
+  max_agents: 48
 
