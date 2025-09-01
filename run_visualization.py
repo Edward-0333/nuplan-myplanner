@@ -28,7 +28,7 @@ def plot_scenarios(data):
 
     # plot map
     map_data = data['map']
-    positions = map_data['point_position'] # (N, 3, 20, 2)
+    positions = map_data['point_position'] # (N, 3, 21, 2)
     N = positions.shape[0]
     plt.figure(figsize=(100, 100))
 
@@ -107,7 +107,7 @@ def main(cfg: DictConfig):
                                         if file == feature_builders.get_feature_unique_name() + '.gz':
                                             file_path = os.path.join(sub_sub_root, file)
                                             file_names.append(file_path)
-
+    file_names = sorted(file_names)
     for file_name in file_names:
         print(file_name)
         feature = storing_mechanism.load_computed_feature_from_folder(pathlib.Path(file_name), feature_builders.get_feature_type())

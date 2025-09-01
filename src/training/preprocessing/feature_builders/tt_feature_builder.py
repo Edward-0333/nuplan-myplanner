@@ -432,6 +432,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         )
 
         M, P = len(lane_objects) + len(crosswalk_objects), sample_points
+        point_position_raw = np.zeros((M, 3, P+1, 2), dtype=np.float64)
         point_position = np.zeros((M, 3, P, 2), dtype=np.float64)
         point_vector = np.zeros((M, 3, P, 2), dtype=np.float64)
         point_side = np.zeros((M, 3), dtype=np.int8)
@@ -457,15 +458,15 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             left_bound = self._sample_discrete_path(
                 lane.left_boundary.discrete_path, sample_points + 1
             )
-            # if not same_direction(centerline, left_bound):
-            #     left_bound=left_bound[::-1]
+            if not same_direction(centerline, left_bound):
+                left_bound=left_bound[::-1]
             right_bound = self._sample_discrete_path(
                 lane.right_boundary.discrete_path, sample_points + 1
             )
-            # if not same_direction(centerline, right_bound):
-            #     right_bound=right_bound[::-1]
+            if not same_direction(centerline, right_bound):
+                right_bound=right_bound[::-1]
             edges = np.stack([centerline, left_bound, right_bound], axis=0)
-
+            point_position_raw[idx] = edges
             point_vector[idx] = edges[:, 1:] - edges[:, :-1]
             point_position[idx] = edges[:, :-1]
             point_orientation[idx] = np.arctan2(
@@ -498,6 +499,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             edges = self._get_crosswalk_edges(crosswalk)
             point_vector[idx] = edges[:, 1:] - edges[:, :-1]
             point_position[idx] = edges[:, :-1]
+            point_position_raw[idx] = edges
             point_orientation[idx] = np.arctan2(
                 point_vector[idx, :, :, 1], point_vector[idx, :, :, 0]
             )
@@ -530,6 +532,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             "polygon_has_speed_limit": polygon_has_speed_limit,
             "polygon_speed_limit": polygon_speed_limit,
             "polygon_road_block_id": polygon_road_block_id,
+            "point_position_raw": point_position_raw
         }
 
         return map_features, object_ids
