@@ -30,7 +30,7 @@ from shapely import LineString, Point
 
 from src.training.preprocessing.features.tt_feature import TTFeature
 from src.training.scenario_manager.scenario_manager import OccupancyType, ScenarioManager
-from src.training.scenario_manager.utils.route_utils import get_current_roadblock_candidates
+from src.training.scenario_manager.utils.route_utils import get_current_roadblock_candidates, same_direction
 from . import common
 
 
@@ -457,9 +457,13 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             left_bound = self._sample_discrete_path(
                 lane.left_boundary.discrete_path, sample_points + 1
             )
+            # if not same_direction(centerline, left_bound):
+            #     left_bound=left_bound[::-1]
             right_bound = self._sample_discrete_path(
                 lane.right_boundary.discrete_path, sample_points + 1
             )
+            # if not same_direction(centerline, right_bound):
+            #     right_bound=right_bound[::-1]
             edges = np.stack([centerline, left_bound, right_bound], axis=0)
 
             point_vector[idx] = edges[:, 1:] - edges[:, :-1]

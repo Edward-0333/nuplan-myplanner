@@ -16,6 +16,21 @@ from .bfs_roadblock import BreadthFirstSearchRoadBlock
 def normalize_angle(angle: float) -> float:
     return (angle + np.pi) % (2 * np.pi) - np.pi
 
+def same_direction(A, B):
+    """
+    A, B: shape (N,2)，两条线的点序列
+    """
+    # 用首末点近似方向向量
+    vA = A[-1] - A[0]
+    vB = B[-1] - B[0]
+
+    # 归一化
+    vA = vA / np.linalg.norm(vA)
+    vB = vB / np.linalg.norm(vB)
+
+    # 判断内积是否为正
+    dot = np.dot(vA, vB)
+    return dot > 0
 
 def get_current_roadblock_candidates(
     ego_state: EgoState,

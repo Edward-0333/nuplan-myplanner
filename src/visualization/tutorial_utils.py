@@ -213,24 +213,6 @@ def serialize_scenario(
     return simulation_history
 
 
-def visualize_scenario(
-    scenario: NuPlanScenario, save_dir: str = '/tmp/scenario_visualization/', bokeh_port: int = 8899
-) -> None:
-    """
-    Visualize a scenario in Bokeh.
-    :param scenario: Scenario object to be visualized.
-    :param save_dir: Dir to save serialization and visualization artifacts.
-    :param bokeh_port: Port that the server bokeh starts to render the generate the visualization will run on.
-    """
-    map_factory = NuPlanMapFactory(get_maps_db(map_root=scenario.map_root, map_version=scenario.map_version))
-
-    simulation_history = serialize_scenario(scenario)
-    simulation_scenario_key = save_scenes_to_dir(
-        scenario=scenario, save_dir=save_dir, simulation_history=simulation_history
-    )
-    visualize_scenarios([simulation_scenario_key], map_factory, Path(save_dir), bokeh_port=bokeh_port)
-
-
 def visualize_scenarios(
     simulation_scenario_keys: List[SimulationScenarioKey],
     map_factory: NuPlanMapFactory,
@@ -366,45 +348,138 @@ def get_scenario_type_token_map(db_files: List[str]) -> Dict[str, List[Tuple[str
     return available_scenario_types
 
 
-def visualize_nuplan_scenarios(
-    data_root: str, db_files: str, map_root: str, map_version: str, bokeh_port: int = 8899
+from pathlib import Path
+import random
+import logging
+from bokeh.io.export import export_png
+from bokeh.io.export import export_png
+import matplotlib.pyplot as plt
+
+def visualize_scenario(
+    scenario: NuPlanScenario,
+    save_dir: str = "./scenario_pngs/",
+    filename: str = "scenario.png"
 ) -> None:
     """
-    Create a dropdown box populated with unique scenario types to visualize from a database.
-    :param data_root: The root directory to use for looking for db files.
-    :param db_files: List of db files to load.
-    :param map_root: The root directory to use for looking for maps.
-    :param map_version: The map version to use.
-    :param bokeh_port: Port that the server bokeh starts to render the generate the visualization will run on.
+    使用 matplotlib 可视化 scenario 并保存为 PNG。
+    绘制 ego 轨迹 + 其他车辆轨迹。
     """
-    from IPython.display import clear_output, display
-    from ipywidgets import Dropdown, Output
+    # 生成 simulation history
+    simulation_history = serialize_scenario(scenario)
 
+    # ego 轨迹
+    ego_positions = [sample.ego_state.center for sample in simulation_history.data]
+    ego_x, ego_y = zip(*[(p.x, p.y) for p in ego_positions])
+
+    plt.figure(figsize=(8, 8))
+    plt.plot(ego_x, ego_y, 'b-', linewidth=2, label="Ego trajectory")
+
+    # 绘制其他车辆轨迹（红点）
+    for sample in simulation_history.data:
+        for track in sample.observation.tracked_objects.tracked_objects:
+            if track.object_type.name == "VEHICLE":
+                plt.scatter(track.center.x, track.center.y, c='r', s=5, alpha=0.4)
+
+    plt.title(f"Scenario: {scenario.scenario_name}")
+    plt.xlabel("x [m]")
+    plt.ylabel("y [m]")
+    plt.legend()
+    plt.axis("equal")
+
+    # 保存到文件
+    save_path = Path(save_dir)
+    save_path.mkdir(parents=True, exist_ok=True)
+    file_path = save_path / filename
+    plt.savefig(file_path, dpi=200)
+    plt.close()
+
+    logger.info(f"Matplotlib scenario visualization saved to {file_path}")
+def visualize_scenarios_to_png(
+    simulation_scenario_keys: List[SimulationScenarioKey],
+    map_factory: NuPlanMapFactory,
+    save_path: Path,
+    output_dir: str,
+) -> None:
+    """
+    Render scenarios with Bokeh and save as PNG instead of opening a server.
+    """
+    nuboard_file = NuBoardFile(
+        simulation_main_path=save_path.name,
+        simulation_folder='',
+        metric_main_path='',
+        metric_folder='',
+        aggregator_metric_folder='',
+    )
+    experiment_file_data = ExperimentFileData(file_paths=[nuboard_file])
+    simulation_tile = SimulationTile(
+        doc=Document(),
+        map_factory=map_factory,
+        experiment_file_data=experiment_file_data,
+        vehicle_parameters=get_pacifica_parameters(),
+    )
+    simulation_scenario_data = simulation_tile.render_simulation_tiles(simulation_scenario_keys)
+
+    # 保存所有场景图
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for idx, data in enumerate(simulation_scenario_data):
+        fig = data.plot
+        export_png(fig, filename=str(output_dir / f"scenario_{idx}.png"))
+
+    logger.info(f"Saved {len(simulation_scenario_data)} scenario PNGs to {output_dir}")
+
+def visualize_nuplan_scenarios_local(
+    data_root: str,
+    db_files: str,
+    map_root: str,
+    map_version: str,
+    save_dir: str = "./scenario_outputs",
+    bokeh_port: int = 8899,
+) -> None:
+    """
+    Locally visualize a random scenario type from db_files and save plots as PNGs.
+    - 不使用IPython交互
+    - 随机选取scenario_type
+    - 渲染图像保存到本地文件夹
+    """
+    output_dir="./scenario_pngs"
+
+
+    # 1. 找到所有日志数据库文件
     log_db_files = discover_log_dbs(db_files)
 
+    # 2. 构建场景类型 -> (db_file, token) 映射
     scenario_type_token_map = get_scenario_type_token_map(log_db_files)
 
-    out = Output()
-    drop_down = Dropdown(description='Scenario', options=sorted(scenario_type_token_map.keys()))
+    if not scenario_type_token_map:
+        logging.error("没有找到任何场景！请检查db_files路径")
+        return
+    # "home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp/cache/2021.09.16.15.12.03_veh-42_01037_01434/on_carpark/821300ba1e735b27/feature.gz"
 
-    def scenario_dropdown_handler(change: Any) -> None:
-        """
-        Dropdown handler that randomly chooses a scenario from the selected scenario type and renders it.
-        :param change: Object containing scenario selection.
-        """
-        with out:
-            clear_output()
+    # 3. 随机选择一个场景类型
+    scenario_type = random.choice(list(scenario_type_token_map.keys()))
+    log_db_file, token = random.choice(scenario_type_token_map[scenario_type])
+    logging.info(f"随机选择场景类型: {scenario_type}, token: {token}")
 
-            logger.info("Randomly rendering a scenario...")
-            scenario_type = str(change.new)
-            log_db_file, token = random.choice(scenario_type_token_map[scenario_type])
-            scenario = get_default_scenario_from_token(data_root, log_db_file, token, map_root, map_version)
+    # 4. 构造Scenario对象
+    scenario = get_default_scenario_from_token(
+        data_root=data_root,
+        log_file_full_path=log_db_file,
+        token=token,
+        map_root=map_root,
+        map_version=map_version,
+    )
+    # map_factory = NuPlanMapFactory(get_maps_db(map_root=scenario.map_root, map_version=scenario.map_version))
+    #
+    # # 5. 序列化场景并保存
+    # simulation_history = serialize_scenario(scenario)
+    # simulation_scenario_key = save_scenes_to_dir(
+    #     scenario=scenario, save_dir=str(save_dir), simulation_history=simulation_history
+    # )
+    # visualize_scenarios_to_png([simulation_scenario_key], map_factory, Path(output_dir), output_dir)
+    visualize_scenario(scenario, save_dir="./scenario_pngs", filename="scenario1.png")
 
-            visualize_scenario(scenario, bokeh_port=bokeh_port)
-
-    display(drop_down)
-    display(out)
-    drop_down.observe(scenario_dropdown_handler, names='value')
+    print(1)
 
 
 def setup_notebook() -> None:

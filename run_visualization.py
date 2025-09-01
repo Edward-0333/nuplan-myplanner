@@ -12,12 +12,39 @@ import hydra
 import os
 from omegaconf import DictConfig
 import pathlib
+import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon
+import numpy as np
+
 
 CONFIG_PATH = os.getenv('NUPLAN_HYDRA_CONFIG_PATH', './config')
 CONFIG_NAME = 'default_training'
 os.environ['NUPLAN_MAPS_ROOT']="/home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/dataset/maps"
 os.environ['NUPLAN_DATA_ROOT']="/home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/dataset"
 os.environ['NUPLAN_EXP_ROOT']="/home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp"
+
+
+def plot_scenarios(data):
+
+    # plot map
+    map_data = data['map']
+    positions = map_data['point_position'] # (N, 3, 20, 2)
+    N = positions.shape[0]
+    plt.figure(figsize=(100, 100))
+
+    for i in range(N):
+        polygon_points = np.vstack([positions[i,1,:,:], positions[i,2,:,:][::-1]])
+        plt.plot(positions[i,0,:,0], positions[i,0,:,1], label='Ego',linestyle='dashed',color='grey')
+        # plt.plot(positions[i,1,:,0], positions[i,1,:,1], 'r-', label='Line A')
+        # plt.plot(positions[i,2,:,0], positions[i,2,:,1], 'b-', label='Line B')
+        plt.fill(polygon_points[:,0], polygon_points[:,1],
+                 color='lightblue', alpha=0.5,edgecolor='black',linewidth=2)
+
+    plt.axis('equal')
+
+    plt.show(dpi=500)
+    print(1)
+    pass
 
 
 def build_scenarios_from_config(
@@ -82,9 +109,9 @@ def main(cfg: DictConfig):
                                             file_names.append(file_path)
 
     for file_name in file_names:
-
+        print(file_name)
         feature = storing_mechanism.load_computed_feature_from_folder(pathlib.Path(file_name), feature_builders.get_feature_type())
-
+        plot_scenarios(feature.data)
         print(file_name)
 
     print(1)
