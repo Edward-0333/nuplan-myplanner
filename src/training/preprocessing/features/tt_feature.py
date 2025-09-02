@@ -189,6 +189,10 @@ class TTFeature(AbstractModelFeature):
         data["map"]["point_position"] = np.matmul(
             data["map"]["point_position"] - center_xy, rotate_mat
         )
+        data["map"]["point_position_raw"] = np.matmul(
+            data["map"]["point_position_raw"] - center_xy, rotate_mat
+        )
+
         data["map"]["point_vector"] = np.matmul(data["map"]["point_vector"], rotate_mat)
         data["map"]["point_orientation"] -= center_angle
 

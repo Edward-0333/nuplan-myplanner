@@ -188,8 +188,9 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         scenario_manager.update_obstacle_map(
             tracked_objects_list[present_idx], traffic_light_status
         )
-        ego_lanes, ego_blocks = scenario_manager.get_ego_lane_id(ego_state_list)
+
         data = {}
+        data["ego_lanes"], data["ego_blocks"] = scenario_manager.get_ego_lane_id(ego_state_list)
         data["current_state"] = self._get_ego_current_state(
             ego_state_list[present_idx], ego_state_list[present_idx - 1]
         )
@@ -446,7 +447,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         polygon_speed_limit = np.zeros(M, dtype=np.float64)
         polygon_has_speed_limit = np.zeros(M, dtype=np.bool_)
         polygon_road_block_id = np.zeros(M, dtype=np.int32)
-
+        polygon_road_line_id = np.zeros(M, dtype=np.int32)
         for lane in lane_objects:
             object_id = int(lane.id)
             idx = object_ids.index(object_id)
@@ -493,7 +494,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 lane.speed_limit_mps if lane.speed_limit_mps else 0
             )
             polygon_road_block_id[idx] = int(lane.get_roadblock_id())
-
+            polygon_road_line_id[idx] = int(lane.id)
         for crosswalk in crosswalk_objects:
             idx = object_ids.index(int(crosswalk.id))
             edges = self._get_crosswalk_edges(crosswalk)
@@ -532,6 +533,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             "polygon_has_speed_limit": polygon_has_speed_limit,
             "polygon_speed_limit": polygon_speed_limit,
             "polygon_road_block_id": polygon_road_block_id,
+            "polygon_road_line_id": polygon_road_line_id,
             "point_position_raw": point_position_raw
         }
 

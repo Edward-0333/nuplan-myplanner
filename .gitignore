@@ -1,0 +1,3 @@
+# 忽略scenario_pngs文件夹下的所有内容
+scenario_pngs/
+scenario_outputs/

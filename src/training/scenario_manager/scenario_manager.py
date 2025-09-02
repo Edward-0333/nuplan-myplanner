@@ -261,7 +261,7 @@ class ScenarioManager:
             # tmp_lane = self._route_manager._get_starting_lane(ego_state)
             # assert tmp_lane.id in route_lane_dict.keys() and tmp_lane in lanes
             # ego_lanes.append(tmp_lane)
-            # ego_blocks.append(current_block)
+            ego_blocks.append(current_block.id)
             displacement_errors = []
             ego_pose: StateSE2 = ego_state.rear_axle
             for lane in lanes:
@@ -278,7 +278,7 @@ class ScenarioManager:
                 displacement_errors.append(displacement_error)
             argmin = np.argmin(displacement_errors)
             lane = lanes[argmin]
-            ego_lanes.append(lane)
+            ego_lanes.append(lane.id)
         return ego_lanes, ego_blocks
 
 
