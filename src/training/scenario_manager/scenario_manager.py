@@ -7,6 +7,7 @@ from nuplan.common.actor_state.ego_state import EgoState
 from nuplan.common.actor_state.state_representation import Point2D, StateSE2
 from nuplan.common.actor_state.tracked_objects import TrackedObjects
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
+from nuplan.common.actor_state.agent import Agent
 from nuplan.common.maps.maps_datatypes import (
     SemanticMapLayer,
     TrafficLightStatusData,
@@ -23,7 +24,7 @@ from shapely.ops import unary_union
 
 from .occupancy_map import OccupancyMap, OccupancyType
 from .route_manager import RouteManager
-from src.training.scenario_manager.utils.route_utils import get_current_roadblock_candidates
+from src.training.scenario_manager.utils.route_utils import get_current_roadblock_candidates, get_current_roadblock
 
 DRIVABLE_LAYERS = {
     SemanticMapLayer.ROADBLOCK,
@@ -239,7 +240,7 @@ class ScenarioManager:
     def object_in_drivable_area(self, polygon: Polygon):
         return len(self._drivable_area_map.intersects(polygon)) > 0
     
-    def get_ego_lane_id(self, ego_states: List[EgoState]):
+    def get_car_lane_id(self, car_states):
         ego_blocks = []
         ego_lanes = []
         route_lane_dict = self.get_route_lane_dicts()
@@ -251,19 +252,27 @@ class ScenarioManager:
                 id_, SemanticMapLayer.ROADBLOCK_CONNECTOR
             )
             route_roadblock_dict[id_] = block
-        for i, ego_state in enumerate(ego_states):
-            # print(f"正在處理第{i}個")
-            # if i == 97:
-            #     print(1)
+        # 如果car_states是列表，则遍历每个状态
+        if not isinstance(car_states, list):
+            car_states = [car_states]
+
+        for i, car_state in enumerate(car_states):
             current_block, current_block_candidates = (
-                get_current_roadblock_candidates(ego_state, self._map_api, route_roadblock_dict))
+                get_current_roadblock(car_state, self._map_api, route_roadblock_dict))
+            if current_block is None:
+                ego_lanes.append('')
+                ego_blocks.append('')
+                continue
             lanes = current_block.interior_edges
             # tmp_lane = self._route_manager._get_starting_lane(ego_state)
             # assert tmp_lane.id in route_lane_dict.keys() and tmp_lane in lanes
             # ego_lanes.append(tmp_lane)
             ego_blocks.append(current_block.id)
             displacement_errors = []
-            ego_pose: StateSE2 = ego_state.rear_axle
+            if isinstance(car_state, EgoState):
+                ego_pose: StateSE2 = car_state.rear_axle
+            elif isinstance(car_state, Agent):
+                ego_pose: StateSE2 = car_state.center
             for lane in lanes:
                 lane_discrete_path: List[StateSE2] = lane.baseline_path.discrete_path
                 lane_discrete_points = np.array(
@@ -279,7 +288,8 @@ class ScenarioManager:
             argmin = np.argmin(displacement_errors)
             lane = lanes[argmin]
             ego_lanes.append(lane.id)
-        return ego_lanes, ego_blocks
+        return np.array(ego_lanes), np.array(ego_blocks)
+
 
 
 

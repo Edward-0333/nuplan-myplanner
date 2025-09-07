@@ -9,6 +9,7 @@ from nuplan.common.maps.maps_datatypes import SemanticMapLayer
 from nuplan.planning.simulation.occupancy_map.strtree_occupancy_map import (
     STRTreeOccupancyMapFactory,
 )
+from nuplan.common.actor_state.agent import Agent
 
 from .bfs_roadblock import BreadthFirstSearchRoadBlock
 
@@ -48,7 +49,11 @@ def get_current_roadblock_candidates(
     :param displacement_error_thresh: maximum displacement, defaults to 3
     :return: tuple of most promising roadblock and other candidates
     """
-    ego_pose: StateSE2 = ego_state.rear_axle
+    # 如果ego_state是EgoState类型，获取后轴位置
+    if isinstance(ego_state, EgoState):
+        ego_pose: StateSE2 = ego_state.rear_axle
+    elif isinstance(ego_state, Agent):
+        ego_pose: StateSE2 = ego_state.center
     roadblock_candidates = []
 
     layers = [SemanticMapLayer.ROADBLOCK, SemanticMapLayer.ROADBLOCK_CONNECTOR]
@@ -128,6 +133,107 @@ def get_current_roadblock_candidates(
         roadblock_candidates,
     )
 
+
+def get_current_roadblock(
+    ego_state: EgoState,
+    map_api: AbstractMap,
+    route_roadblocks_dict: Dict[str, RoadBlockGraphEdgeMapObject],
+    heading_error_thresh: float = np.pi / 4,
+    displacement_error_thresh: float = 3,
+) -> Tuple[RoadBlockGraphEdgeMapObject, List[RoadBlockGraphEdgeMapObject]]:
+    """
+    不同于 get_current_roadblock_candidate函数，本函数严格返回当前的roadblock,不再返回候选集
+    Determines a set of roadblock candidate where ego is located
+    :param ego_state: class containing ego state
+    :param map_api: map object
+    :param route_roadblocks_dict: dictionary of on-route roadblocks
+    :param heading_error_thresh: maximum heading error, defaults to np.pi/4
+    :param displacement_error_thresh: maximum displacement, defaults to 3
+    :return: tuple of most promising roadblock and other candidates
+    """
+    # 如果ego_state是EgoState类型，获取后轴位置
+    if isinstance(ego_state, EgoState):
+        ego_pose: StateSE2 = ego_state.rear_axle
+    elif isinstance(ego_state, Agent):
+        ego_pose: StateSE2 = ego_state.center
+    roadblock_candidates = []
+
+    layers = [SemanticMapLayer.ROADBLOCK, SemanticMapLayer.ROADBLOCK_CONNECTOR]
+    roadblock_dict = map_api.get_proximal_map_objects(
+        point=ego_pose.point, radius=2.5, layers=layers
+    )
+    roadblock_candidates = (
+        roadblock_dict[SemanticMapLayer.ROADBLOCK]
+        + roadblock_dict[SemanticMapLayer.ROADBLOCK_CONNECTOR]
+    )
+
+    if not roadblock_candidates:
+        for layer in layers:
+            roadblock_id_, distance = map_api.get_distance_to_nearest_map_object(
+                point=ego_pose.point, layer=layer
+            )
+            roadblock = map_api.get_map_object(roadblock_id_, layer)
+
+            if roadblock:
+                roadblock_candidates.append(roadblock)
+
+    on_route_candidates, on_route_candidate_displacement_errors = [], []
+    candidates, candidate_displacement_errors = [], []
+
+    roadblock_displacement_errors = []
+    roadblock_heading_errors = []
+
+    for idx, roadblock in enumerate(roadblock_candidates):
+        lane_displacement_error, lane_heading_error = np.inf, np.inf
+
+        for lane in roadblock.interior_edges:
+            lane_discrete_path: List[StateSE2] = lane.baseline_path.discrete_path
+            lane_discrete_points = np.array(
+                [state.point.array for state in lane_discrete_path], dtype=np.float64
+            )
+            lane_state_distances = (
+                (lane_discrete_points - ego_pose.point.array[None, ...]) ** 2.0
+            ).sum(axis=-1) ** 0.5
+            argmin = np.argmin(lane_state_distances)
+
+            heading_error = np.abs(
+                normalize_angle(lane_discrete_path[argmin].heading - ego_pose.heading)
+            )
+            displacement_error = lane_state_distances[argmin]
+
+            if displacement_error < lane_displacement_error:
+                lane_heading_error, lane_displacement_error = (
+                    heading_error,
+                    displacement_error,
+                )
+
+            if (
+                heading_error < heading_error_thresh
+                and displacement_error < displacement_error_thresh
+            ):
+                if roadblock.id in route_roadblocks_dict.keys():
+                    on_route_candidates.append(roadblock)
+                    on_route_candidate_displacement_errors.append(displacement_error)
+                else:
+                    candidates.append(roadblock)
+                    candidate_displacement_errors.append(displacement_error)
+
+        roadblock_displacement_errors.append(lane_displacement_error)
+        roadblock_heading_errors.append(lane_heading_error)
+
+    if on_route_candidates:  # prefer on-route roadblocks
+        return (
+            on_route_candidates[np.argmin(on_route_candidate_displacement_errors)],
+            on_route_candidates,
+        )
+    elif candidates:  # fallback to most promising candidate
+        return candidates[np.argmin(candidate_displacement_errors)], candidates
+
+    # otherwise, just find any close roadblock
+    return (
+        None,
+        [None],
+    )
 
 def route_roadblock_correction(
     ego_state: EgoState,

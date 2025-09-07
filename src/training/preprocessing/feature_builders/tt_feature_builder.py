@@ -188,15 +188,15 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         scenario_manager.update_obstacle_map(
             tracked_objects_list[present_idx], traffic_light_status
         )
-
         data = {}
-        data["ego_lanes"], data["ego_blocks"] = scenario_manager.get_ego_lane_id(ego_state_list)
+        data["route_roadblocks_ids"] = route_roadblocks_ids
         data["current_state"] = self._get_ego_current_state(
             ego_state_list[present_idx], ego_state_list[present_idx - 1]
         )
-        ego_features = self._get_ego_features(ego_states=ego_state_list)
+        ego_features = self._get_ego_features(scenario_manager, ego_states=ego_state_list)
         # self.get_ego_lane_id(ego_states=ego_state_list, map_api=map_api)
         agent_features, agent_tokens, agents_polygon = self._get_agent_features(
+            scenario_manager=scenario_manager,
             query_xy=query_xy,
             present_idx=present_idx,
             tracked_objects_list=tracked_objects_list,
@@ -244,7 +244,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
 
         return state
 
-    def _get_ego_features(self, ego_states: List[EgoState]):
+    def _get_ego_features(self,scenario_manager, ego_states: List[EgoState]):
         """note that rear axle velocity and acceleration are in ego local frame,
         and need to be transformed to the global frame.
         """
@@ -255,6 +255,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         acceleration = np.zeros((T, 2), dtype=np.float64)
         shape = np.zeros((T, 2), dtype=np.float64)
         valid_mask = np.ones(T, dtype=np.bool_)
+        in_route_block = np.ones(T, dtype=np.bool_)
 
         for t, state in enumerate(ego_states):
             position[t] = state.rear_axle.array
@@ -273,6 +274,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             self.interested_objects_types.index(TrackedObjectType.EGO), dtype=np.int8
         )
 
+        ego_lanes, ego_blocks = scenario_manager.get_car_lane_id(ego_states)
+
         return {
             "position": position,
             "heading": heading,
@@ -281,10 +284,14 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             "shape": shape,
             "category": category,
             "valid_mask": valid_mask,
+            "lane_id": ego_lanes,
+            "roadblock_id": ego_blocks,
+            "in_route_block": in_route_block
         }
 
     def _get_agent_features(
         self,
+        scenario_manager,
         query_xy: Point2D,
         present_idx: int,
         tracked_objects_list: List[TrackedObjects],
@@ -293,6 +300,17 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         present_agents = present_tracked_objects.get_tracked_objects_of_types(
             self.interested_objects_types
         )
+        route_block_ids = scenario_manager.get_route_roadblock_ids()
+        agent_lanes, agent_blocks = [], []
+        now_in_route = {}
+        for agent in present_agents:
+            car_lane, car_block = scenario_manager.get_car_lane_id(agent)
+            agent_token = agent.track_token
+            agent_lanes.append(car_lane[0])
+            agent_blocks.append(car_block[0])
+            in_route_block = car_block[0] in route_block_ids
+            now_in_route[agent_token] = {"lane": car_lane[0], "block": car_block[0], "in_route_block": in_route_block}
+
         N, T = min(len(present_agents), self.max_agents), len(tracked_objects_list)
 
         position = np.zeros((N, T, 2), dtype=np.float64)
@@ -301,6 +319,9 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         shape = np.zeros((N, T, 2), dtype=np.float64)
         category = np.zeros((N,), dtype=np.int8)
         valid_mask = np.zeros((N, T), dtype=np.bool_)
+        in_route_block = np.zeros((N,T), dtype=np.bool_)
+        lane_id = np.full((N, T),'', dtype='U10')
+        block_id = np.full((N, T),'', dtype='U10')
         polygon = [None] * N
 
         if N == 0 or self.disable_agent:
@@ -327,10 +348,19 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             for agent in tracked_objects.get_tracked_objects_of_types(
                 self.interested_objects_types
             ):
+                # if agent.tracked_object_type == self.interested_objects_types[2]:
+                #     print(1)
                 if agent.track_token not in agent_ids_dict:
                     continue
+                if not now_in_route[agent.track_token]["in_route_block"]:
+                    continue
+                car_lane, car_block = scenario_manager.get_car_lane_id(agent)
+                whether_in_route_block = car_block[0] in route_block_ids
 
                 idx = agent_ids_dict[agent.track_token]
+                in_route_block[idx, t] = whether_in_route_block
+                lane_id[idx, t] = car_lane[0]
+                block_id[idx, t] = car_block[0]
                 position[idx, t] = agent.center.array
                 heading[idx, t] = agent.center.heading
                 velocity[idx, t] = agent.velocity.array
@@ -350,6 +380,9 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             "shape": shape,
             "category": category,
             "valid_mask": valid_mask,
+            "in_route_block": in_route_block,
+            "lane_id": lane_id,
+            "roadblock_id": block_id
         }
 
         return agent_features, list(agent_ids_sorted), polygon
@@ -447,7 +480,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         polygon_speed_limit = np.zeros(M, dtype=np.float64)
         polygon_has_speed_limit = np.zeros(M, dtype=np.bool_)
         polygon_road_block_id = np.zeros(M, dtype=np.int32)
-        polygon_road_line_id = np.zeros(M, dtype=np.int32)
+        polygon_road_lane_id = np.zeros(M, dtype=np.int32)
         for lane in lane_objects:
             object_id = int(lane.id)
             idx = object_ids.index(object_id)
@@ -494,7 +527,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 lane.speed_limit_mps if lane.speed_limit_mps else 0
             )
             polygon_road_block_id[idx] = int(lane.get_roadblock_id())
-            polygon_road_line_id[idx] = int(lane.id)
+            polygon_road_lane_id[idx] = int(lane.id)
         for crosswalk in crosswalk_objects:
             idx = object_ids.index(int(crosswalk.id))
             edges = self._get_crosswalk_edges(crosswalk)
@@ -533,7 +566,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             "polygon_has_speed_limit": polygon_has_speed_limit,
             "polygon_speed_limit": polygon_speed_limit,
             "polygon_road_block_id": polygon_road_block_id,
-            "polygon_road_line_id": polygon_road_line_id,
+            "polygon_road_lane_id": polygon_road_lane_id,
             "point_position_raw": point_position_raw
         }
 
@@ -562,15 +595,15 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
 
             return steering_angle, yaw_rate
 
-    def get_ego_lane_id(self, ego_states: List[EgoState], map_api):
-        route_lane_dict = self.scenario_manager.get_route_lane_dicts()
-        route_roadblock_ids = self.scenario_manager.get_route_roadblock_ids()
-        for ego_state in ego_states:
-            current_block, current_block_candidates = (
-                get_current_roadblock_candidates(ego_state, map_api, route_roadblock_ids))
-            lanes = current_block.interior_edges
-            # tmp_lanes = self.scenario_manager._route_manager.
-            pass
+    # def get_ego_lane_id(self, ego_states: List[EgoState], map_api):
+    #     route_lane_dict = self.scenario_manager.get_route_lane_dicts()
+    #     route_roadblock_ids = self.scenario_manager.get_route_roadblock_ids()
+    #     for ego_state in ego_states:
+    #         current_block, current_block_candidates = (
+    #             get_current_roadblock_candidates(ego_state, map_api, route_roadblock_ids))
+    #         lanes = current_block.interior_edges
+    #         # tmp_lanes = self.scenario_manager._route_manager.
+    #         pass
 
     def _get_crosswalk_edges(
         self, crosswalk: PolygonMapObject, sample_points: int = 21

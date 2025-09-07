@@ -33,15 +33,22 @@ def plot_scenarios(data,scenario_name):
     # 如果文件夹不存在，则创建
     pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
 
+    map_data = data['map']
+    positions = map_data['point_position_raw']  # (N, 3, 21, 2)
+    polygon_type = map_data['polygon_type']  # (N,)
+    polygon_on_route = map_data['polygon_on_route']  # (N,)
+    polygon_road_block_id = map_data['polygon_road_block_id']  # (N,)
+    polygon_road_block_id_set = set(polygon_road_block_id)
+    # 设置一个列表，存储每个road_block_id对应的颜色
+    road_block_id_color = {}
+    for road_block_id in polygon_road_block_id_set:
+        road_block_id_color[road_block_id] = (random.random(), random.random(), random.random())
 
     for t in range(101):
         fig, ax = plt.subplots(figsize=(50, 50))
-        now_lane = data['ego_lanes'][t]
-        now_block = data['ego_blocks'][t]
+        now_lane = data['agent']['lane_id'][0][t]
+        now_block = data['agent']['roadblock_id'][0][t]
         # plot map
-        map_data = data['map']
-        positions = map_data['point_position_raw'] # (N, 3, 21, 2)
-        polygon_type = map_data['polygon_type'] # (N,)
         N = positions.shape[0]
         print('正在绘制场景:', scenario_name, '时间步:', t, '多边形数量:', N)
         for i in range(N):
@@ -55,8 +62,13 @@ def plot_scenarios(data,scenario_name):
             elif polygon_type[i] == 2:
                 color = 'lightsteelblue'
             elif polygon_type[i] == 1:
-                color = random.choice(['orange','gold','yellow','khaki'])
-            road_lane_id = map_data['polygon_road_line_id'][i]
+                color = 'cyan'
+            road_lane_id = map_data['polygon_road_lane_id'][i]
+            # polygon_road_block_id_i = polygon_road_block_id[i]
+            # # 绘制同一road_block_id的多边形使用相同颜色
+            # color = road_block_id_color[polygon_road_block_id_i]
+            if polygon_on_route[i] == 1:
+                color = 'yellow'
             if road_lane_id == int(now_lane):
                 color = 'green'
             ax.fill(polygon_points[:,0], polygon_points[:,1],
@@ -116,9 +128,13 @@ def plot_scenarios(data,scenario_name):
             ])
             # 全局坐标
             global_corners = (local_corners @ R.T) + np.array([rear_x, rear_y])
+            if agent_data['in_route_block'][i,t]:
+                color = 'gold'
+            else:
+                color = 'grey'
             # 绘制矩形
             ax.fill(global_corners[:, 0], global_corners[:, 1],
-                    facecolor='grey', edgecolor='k', alpha=0.5, linewidth=2)
+                    facecolor=color, edgecolor='k', alpha=0.5, linewidth=2)
         ax.axis('equal')
         plt.savefig(f'{save_path}/{t:03d}.png')
         plt.close()
