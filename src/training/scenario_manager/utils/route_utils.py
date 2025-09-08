@@ -9,6 +9,7 @@ from nuplan.common.maps.maps_datatypes import SemanticMapLayer
 from nuplan.planning.simulation.occupancy_map.strtree_occupancy_map import (
     STRTreeOccupancyMapFactory,
 )
+from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.common.actor_state.agent import Agent
 
 from .bfs_roadblock import BreadthFirstSearchRoadBlock
@@ -156,6 +157,7 @@ def get_current_roadblock(
         ego_pose: StateSE2 = ego_state.rear_axle
     elif isinstance(ego_state, Agent):
         ego_pose: StateSE2 = ego_state.center
+    is_pedestrian = (ego_state.tracked_object_type == TrackedObjectType.PEDESTRIAN) if isinstance(ego_state, Agent) else False
     roadblock_candidates = []
 
     layers = [SemanticMapLayer.ROADBLOCK, SemanticMapLayer.ROADBLOCK_CONNECTOR]
@@ -199,6 +201,8 @@ def get_current_roadblock(
             heading_error = np.abs(
                 normalize_angle(lane_discrete_path[argmin].heading - ego_pose.heading)
             )
+            if is_pedestrian:
+                heading_error = 0
             displacement_error = lane_state_distances[argmin]
 
             if displacement_error < lane_displacement_error:
@@ -229,11 +233,20 @@ def get_current_roadblock(
     elif candidates:  # fallback to most promising candidate
         return candidates[np.argmin(candidate_displacement_errors)], candidates
 
-    # otherwise, just find any close roadblock
-    return (
-        None,
-        [None],
-    )
+    if isinstance(ego_state, EgoState):
+        # otherwise, just find any close roadblock
+        return (
+            roadblock_candidates[np.argmin(roadblock_displacement_errors)],
+            roadblock_candidates,
+        )
+    else:
+        return (
+            None,
+            [None],
+        )
+
+        # otherwise, just find any close roadblock
+
 
 def route_roadblock_correction(
     ego_state: EgoState,

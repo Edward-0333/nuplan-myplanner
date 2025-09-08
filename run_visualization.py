@@ -198,11 +198,17 @@ def main(cfg: DictConfig):
     file_names = sorted(file_names)
     j = 0
     for file_name in file_names:
+        # file_token = file_name.split('/')[-2]
+        # if not file_token=="020379f65ae95ae1":
+        #     continue
+        # if j <=6:
+        #     j += 1
+        #     continue
         scenario_name = file_name.split('/')[-4:-1]
         feature = storing_mechanism.load_computed_feature_from_folder(pathlib.Path(file_name), feature_builders.get_feature_type())
         plot_scenarios(feature.data,scenario_name)
         j += 1
-        if j == 10:
+        if j == 20:
             break
 
 

@@ -189,6 +189,16 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             tracked_objects_list[present_idx], traffic_light_status
         )
         data = {}
+
+        data["map"], map_polygon_tokens = self._get_map_features(
+            map_api=map_api,
+            query_xy=query_xy,
+            route_roadblock_ids=route_roadblocks_ids,
+            traffic_light_status=traffic_light_status,
+            radius=self.radius,
+        )
+        all_consider_block = set(data["map"]["polygon_road_block_id"])
+
         data["route_roadblocks_ids"] = route_roadblocks_ids
         data["current_state"] = self._get_ego_current_state(
             ego_state_list[present_idx], ego_state_list[present_idx - 1]
@@ -200,6 +210,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             query_xy=query_xy,
             present_idx=present_idx,
             tracked_objects_list=tracked_objects_list,
+            all_consider_block=all_consider_block
         )
         data["agent"] = {}
         for k in agent_features.keys():
@@ -210,14 +221,6 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
 
         data["static_objects"] = self._get_static_objects_features(
             present_ego_state, scenario_manager, tracked_objects_list[present_idx]
-        )
-
-        data["map"], map_polygon_tokens = self._get_map_features(
-            map_api=map_api,
-            query_xy=query_xy,
-            route_roadblock_ids=route_roadblocks_ids,
-            traffic_light_status=traffic_light_status,
-            radius=self.radius,
         )
 
         return TTFeature.normalize(data, first_time=True, radius=self.radius)
@@ -295,6 +298,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         query_xy: Point2D,
         present_idx: int,
         tracked_objects_list: List[TrackedObjects],
+        all_consider_block
     ):
         present_tracked_objects = tracked_objects_list[present_idx]
         present_agents = present_tracked_objects.get_tracked_objects_of_types(
@@ -333,6 +337,9 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                     "shape": shape,
                     "category": category,
                     "valid_mask": valid_mask,
+                    "in_route_block": in_route_block,
+                    "lane_id": lane_id,
+                    "roadblock_id": block_id
                 },
                 [],
                 [],
@@ -352,9 +359,13 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 #     print(1)
                 if agent.track_token not in agent_ids_dict:
                     continue
-                if not now_in_route[agent.track_token]["in_route_block"]:
-                    continue
+                # 如果正式跑程序的化，需要取消注释
+                # if not now_in_route[agent.track_token]["in_route_block"]:
+                #     continue
                 car_lane, car_block = scenario_manager.get_car_lane_id(agent)
+                if car_block[0] != '':  # 因为有些车辆会超过地图所考虑的范围，超过范围的车辆不进行考虑
+                    if int(car_block[0]) not in all_consider_block:
+                        continue
                 whether_in_route_block = car_block[0] in route_block_ids
 
                 idx = agent_ids_dict[agent.track_token]
