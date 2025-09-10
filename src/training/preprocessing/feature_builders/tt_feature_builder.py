@@ -15,6 +15,8 @@ from nuplan.planning.simulation.planner.abstract_planner import (
     PlannerInitialization,
     PlannerInput,
 )
+from nuplan.common.actor_state.oriented_box import OrientedBox, in_collision
+
 from nuplan.common.maps.maps_datatypes import (
     SemanticMapLayer,
     TrafficLightStatusData,
@@ -29,6 +31,7 @@ from nuplan.planning.training.preprocessing.features.abstract_model_feature impo
 from shapely import LineString, Point
 
 from src.training.preprocessing.features.tt_feature import TTFeature
+from src.training.scenario_manager.cost_map_manager import CostMapManager
 from src.training.scenario_manager.scenario_manager import OccupancyType, ScenarioManager
 from src.training.scenario_manager.utils.route_utils import get_current_roadblock_candidates, same_direction
 from . import common
@@ -44,6 +47,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
 
         radius: float = 100,
         sample_interval: float = 0.1,
+        build_reference_line: bool = False,
 
     ) -> None:
         super().__init__()
@@ -60,6 +64,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         self.simulation = False
         self.max_agents = max_agents
         self.disable_agent = disable_agent
+        self.build_reference_line = build_reference_line
+
         self.interested_objects_types = [
             TrackedObjectType.EGO,
             TrackedObjectType.VEHICLE,
@@ -199,7 +205,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         )
         all_consider_block = set(data["map"]["polygon_road_block_id"])
 
-        data["route_roadblocks_ids"] = route_roadblocks_ids
+        # data["route_roadblocks_ids"] = route_roadblocks_ids
         data["current_state"] = self._get_ego_current_state(
             ego_state_list[present_idx], ego_state_list[present_idx - 1]
         )
@@ -222,6 +228,42 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         data["static_objects"] = self._get_static_objects_features(
             present_ego_state, scenario_manager, tracked_objects_list[present_idx]
         )
+
+        if not inference:
+            data["causal"] = self.scenario_casual_reasoning_preprocess(
+                present_ego_state,
+                scenario_manager,
+                agent_tokens,
+                map_polygon_tokens,
+                ego_state_list[self.history_samples + 1 :],
+            )
+            data["causal"]["interaction_label"] = self._get_interaction_label(
+                ego_features, agent_features
+            )
+            data["agent"]["valid_mask"][0, self.history_samples + 1 :] = data["causal"][
+                "fixed_ego_future_valid_mask"
+            ]
+
+            cost_map_manager = CostMapManager(
+                origin=present_ego_state.rear_axle.array,
+                angle=present_ego_state.rear_axle.heading,
+                height=600,
+                width=600,
+                resolution=0.2,
+                map_api=map_api,
+            )
+            cost_maps = cost_map_manager.build_cost_maps(
+                static_objects=tracked_objects_list[present_idx].get_static_objects(),
+                agents=agent_features,
+                agents_polygon=agents_polygon,
+                route_roadblock_ids=set(route_roadblocks_ids),
+            )
+            data["cost_maps"] = cost_maps["cost_maps"]
+
+        if self.build_reference_line:
+            data["reference_line"] = self._get_reference_line_feature(
+                scenario_manager, ego_features
+            )
 
         return TTFeature.normalize(data, first_time=True, radius=self.radius)
 
@@ -246,6 +288,78 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         state[6] = yaw_rate
 
         return state
+
+    def scenario_casual_reasoning_preprocess(
+        self,
+        ego_state: EgoState,
+        scenario_manager: ScenarioManager,
+        agents_tokens: List[str],
+        map_polygon_tokens: List[int],
+        ego_future_trajectory: List[EgoState] = None,
+    ):
+        is_waiting_for_red_light_without_lead = False
+        leading_agent_mask = np.zeros(len(agents_tokens), dtype=bool)
+        leading_distance = np.zeros(len(agents_tokens), dtype=np.float64)
+        ego_care_red_light_mask = np.zeros(len(map_polygon_tokens), dtype=bool)
+        fixed_ego_future_valid_mask = np.ones(len(ego_future_trajectory), dtype=bool)
+        free_path_points = np.array([], dtype=np.float64)
+
+        leading_objects = scenario_manager.get_leading_objects()
+        nearest_leading_agent_idx = None
+        nearest_leading_red_light = None
+        nearest_leading_red_light_distance = None
+
+        if (
+            len(leading_objects) > 0
+            and leading_objects[0][1] == OccupancyType.RED_LIGHT
+        ):
+            is_waiting_for_red_light_without_lead = True
+
+        for leading_object in leading_objects:
+            token, occupancy_type, distance = leading_object
+            if occupancy_type == OccupancyType.DYNAMIC:
+                try:
+                    idx = agents_tokens.index(token)
+                except ValueError:
+                    continue
+                if nearest_leading_agent_idx is None:
+                    nearest_leading_agent_idx = idx
+                leading_agent_mask[idx] = True
+                leading_distance[idx] = distance
+            if occupancy_type == OccupancyType.RED_LIGHT:
+                idx = map_polygon_tokens.index(token)
+                ego_care_red_light_mask[idx] = True
+                if nearest_leading_red_light is None:
+                    nearest_leading_red_light = scenario_manager.get_occupancy_object(
+                        token
+                    )
+                    nearest_leading_red_light_distance = distance
+
+        if nearest_leading_red_light is not None:
+            for i, state in enumerate(ego_future_trajectory):
+                if nearest_leading_red_light.contains(Point(*state.center.array)):
+                    fixed_ego_future_valid_mask[i:] = False
+                    break
+
+        ego_velocity = ego_state.dynamic_car_state.speed
+        free_path_start = ego_velocity**2 / (2 * 5) + self.ego_params.length / 2
+        free_path_end = max(7, ego_velocity**2 / (2 * 1.5))
+        if nearest_leading_agent_idx is not None:
+            free_path_end = leading_distance[nearest_leading_agent_idx]
+        if nearest_leading_red_light_distance is not None:
+            free_path_end = min(free_path_end, nearest_leading_red_light_distance)
+        free_path_points = scenario_manager.get_ego_path_points(
+            free_path_start + 3, free_path_end - 3
+        )
+
+        return {
+            "is_waiting_for_red_light_without_lead": is_waiting_for_red_light_without_lead,
+            "leading_agent_mask": leading_agent_mask,
+            "leading_distance": leading_distance,
+            "ego_care_red_light_mask": ego_care_red_light_mask,
+            "fixed_ego_future_valid_mask": fixed_ego_future_valid_mask,
+            "free_path_points": free_path_points,
+        }
 
     def _get_ego_features(self,scenario_manager, ego_states: List[EgoState]):
         """note that rear axle velocity and acceleration are in ego local frame,
@@ -360,8 +474,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 if agent.track_token not in agent_ids_dict:
                     continue
                 # 如果正式跑程序的化，需要取消注释
-                # if not now_in_route[agent.track_token]["in_route_block"]:
-                #     continue
+                if not now_in_route[agent.track_token]["in_route_block"]:
+                    continue
                 car_lane, car_block = scenario_manager.get_car_lane_id(agent)
                 if car_block[0] != '':  # 因为有些车辆会超过地图所考虑的范围，超过范围的车辆不进行考虑
                     if int(car_block[0]) not in all_consider_block:
@@ -630,3 +744,117 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         points = edges[:, 0][:, None, :] + vector[:, None, :] * steps[:, :, None]
 
         return points
+
+    def _get_interaction_label(self, ego, agents):
+        ego_heading = ego["heading"][self.history_samples + 1 :]
+        ego_position = ego["position"][self.history_samples + 1 :]
+        agents_shape = agents["shape"][:, self.history_samples + 1 :]
+        agents_heading = agents["heading"][:, self.history_samples + 1 :]
+        agents_position = agents["position"][:, self.history_samples + 1 :]
+
+        if agents_position.shape[0] == 0 or agents_position.shape[1] == 0:
+            return np.zeros(1)
+
+        N, T = agents_position.shape[:2]
+        agents_invalid_mask = ~torch.from_numpy(
+            agents["valid_mask"][:, self.history_samples + 1 :]
+        )
+        agents_invalid_mask = (
+            agents_invalid_mask.unsqueeze(-1).repeat(1, 1, T).reshape(N, -1)
+        )
+
+        cdist = torch.cdist(
+            torch.from_numpy(agents_position).reshape(-1, 2),
+            torch.from_numpy(ego_position).reshape(-1, 2),
+        ).reshape(N, -1)
+
+        cdist[agents_invalid_mask] = 1e6
+        min_dist, index = cdist.min(dim=-1)
+        interact_flag = min_dist < 4  # coarse judgement
+
+        for i in torch.arange(N)[interact_flag]:
+            agent_t, ego_t = index[i].item() // T, index[i] % T
+            agent_shape = agents_shape[i, agent_t]
+            agent_box = OrientedBox(
+                center=StateSE2(
+                    agents_position[i, agent_t, 0],
+                    agents_position[i, agent_t, 1],
+                    agents_heading[i, agent_t],
+                ),
+                width=agent_shape[0],
+                length=agent_shape[1],
+                height=0.0,
+            )
+            ego_box = self._build_ego_bbox(ego_position[ego_t], ego_heading[ego_t])
+
+            if not in_collision(agent_box, ego_box):
+                interact_flag[i] = False
+
+        interact_label = index.apply_(self._get_interact_type)
+        interact_label[~interact_flag] = 0
+        interact_label = np.concatenate([np.zeros(1), interact_label])
+
+        return interact_label
+
+    @staticmethod
+    def _get_interact_type(index, T=80):
+        row, col = index // T, index % T
+        if row == col:
+            return 0  # collision or self
+        return col - row
+
+    def _get_reference_line_feature(
+        self, scenario_manager: ScenarioManager, ego_features
+    ):
+        reference_lines = scenario_manager.get_reference_lines(length=self.radius)
+
+        n_points = int(self.radius / 1.0)
+        position = np.zeros((len(reference_lines), n_points, 2), dtype=np.float64)
+        vector = np.zeros((len(reference_lines), n_points, 2), dtype=np.float64)
+        orientation = np.zeros((len(reference_lines), n_points), dtype=np.float64)
+        valid_mask = np.zeros((len(reference_lines), n_points), dtype=np.bool)
+        future_projection = np.zeros((len(reference_lines), 8, 2), dtype=np.float64)
+
+        ego_future = ego_features["position"][self.history_samples + 1 :]
+        if len(ego_future) > 0:
+            linestring = [
+                LineString(reference_lines[i]) for i in range(len(reference_lines))
+            ]
+            future_samples = ego_future[9::10]  # every 1s
+            future_samples = [Point(xy) for xy in future_samples]
+
+        for i, line in enumerate(reference_lines):
+            subsample = line[::4][: n_points + 1]
+            n_valid = len(subsample)
+            position[i, : n_valid - 1] = subsample[:-1, :2]
+            vector[i, : n_valid - 1] = np.diff(subsample[:, :2], axis=0)
+            orientation[i, : n_valid - 1] = subsample[:-1, 2]
+            valid_mask[i, : n_valid - 1] = True
+
+            if len(ego_future) > 0:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    for j, future_sample in enumerate(future_samples):
+                        future_projection[i, j, 0] = linestring[i].project(
+                            future_sample
+                        )
+                        future_projection[i, j, 1] = linestring[i].distance(
+                            future_sample
+                        )
+
+        return {
+            "position": position,
+            "vector": vector,
+            "orientation": orientation,
+            "valid_mask": valid_mask,
+            "future_projection": future_projection,
+        }
+
+    def _build_ego_bbox(self, xy, angle):
+        center = xy + 1.67 * np.array([np.cos(angle), np.sin(angle)])
+        return OrientedBox(
+            center=StateSE2(center[0], center[1], angle),
+            width=self.width,
+            length=self.length,
+            height=0.0,
+        )

@@ -21,6 +21,16 @@ from nuplan.planning.training.modeling.lightning_module_wrapper import Lightning
 from nuplan.planning.training.modeling.torch_module_wrapper import TorchModuleWrapper
 from nuplan.planning.training.preprocessing.feature_preprocessor import FeaturePreprocessor
 from nuplan.planning.utils.multithreading.worker_pool import WorkerPool
+from pytorch_lightning.callbacks import (
+    LearningRateMonitor,
+    ModelCheckpoint,
+    RichModelSummary,
+    RichProgressBar,
+)
+from pytorch_lightning.loggers.tensorboard import TensorBoardLogger
+from pytorch_lightning.loggers.wandb import WandbLogger
+
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +43,9 @@ def build_lightning_module(cfg: DictConfig, torch_module_wrapper: TorchModuleWra
     :return: built object.
     """
     # Create the complete Module
-    if "tt_trainer" in cfg:
+    if "trainer" in cfg:
         model = instantiate(
-            cfg.tt_trainer,
+            cfg.trainer,
             model=torch_module_wrapper,
             lr=cfg.lr,
             weight_decay=cfg.weight_decay,
@@ -74,52 +84,51 @@ def build_trainer_tt(cfg: DictConfig) -> pl.Trainer:
     """
     params = cfg.lightning.trainer.params
 
-    callbacks = build_callbacks(cfg)
-
-    plugins = [
-        pl.plugins.DDPPlugin(find_unused_parameters=False, num_nodes=params.num_nodes),
+    # callbacks = build_callbacks(cfg)
+    callbacks = [
+        ModelCheckpoint(
+            dirpath=os.path.join(os.getcwd(), "checkpoints"),
+            filename="{epoch}-{val_minFDE:.3f}",
+            monitor=cfg.lightning.trainer.checkpoint.monitor,
+            mode=cfg.lightning.trainer.checkpoint.mode,
+            save_top_k=cfg.lightning.trainer.checkpoint.save_top_k,
+            save_last=True,
+        ),
+        RichModelSummary(max_depth=1),
+        RichProgressBar(),
+        LearningRateMonitor(logging_interval="epoch"),
     ]
 
-    loggers = [
-        pl.loggers.TensorBoardLogger(
+    if cfg.wandb.mode == "disable":
+        training_logger = TensorBoardLogger(
             save_dir=cfg.group,
             name=cfg.experiment,
             log_graph=False,
-            version='',
-            prefix='',
-        ),
-    ]
+            version="",
+            prefix="",
+        )
+    else:
+        if cfg.wandb.artifact is not None:
+            os.system(f"wandb artifact get {cfg.wandb.artifact}")
+            _, _, artifact = cfg.wandb.artifact.split("/")
+            checkpoint = os.path.join(os.getcwd(), f"artifacts/{artifact}/model.ckpt")
+            run_id = artifact.split(":")[0][-8:]
+            cfg.checkpoint = checkpoint
+            cfg.wandb.run_id = run_id
 
-    if cfg.lightning.trainer.overfitting.enable:
-        OmegaConf.set_struct(cfg, False)
-        params = OmegaConf.merge(params, cfg.lightning.trainer.overfitting.params)
-        params.check_val_every_n_epoch = params.max_epochs + 1
-        OmegaConf.set_struct(cfg, True)
-
-        return pl.Trainer(plugins=plugins, **params)
-
-    if cfg.lightning.trainer.checkpoint.resume_training:
-        # Resume training from latest checkpoint
-        output_dir = Path(cfg.output_dir)
-        date_format = cfg.date_format
-
-        OmegaConf.set_struct(cfg, False)
-        last_checkpoint = extract_last_checkpoint_from_experiment(output_dir, date_format)
-        if not last_checkpoint:
-            raise ValueError('Resume Training is enabled but no checkpoint was found!')
-
-        params.resume_from_checkpoint = str(last_checkpoint)
-        latest_epoch = torch.load(last_checkpoint)['epoch']
-        params.max_epochs += latest_epoch
-        logger.info(f'Resuming at epoch {latest_epoch} from checkpoint {last_checkpoint}')
-
-        OmegaConf.set_struct(cfg, True)
+        training_logger = WandbLogger(
+            save_dir=cfg.group,
+            project=cfg.wandb.project,
+            name=cfg.wandb.name,
+            mode=cfg.wandb.mode,
+            log_model=cfg.wandb.log_model,
+            resume=cfg.checkpoint is not None,
+            id=cfg.wandb.run_id,
+        )
 
     trainer = pl.Trainer(
         callbacks=callbacks,
-        plugins=plugins,
-        logger=loggers,
+        logger=training_logger,
         **params,
     )
-
     return trainer

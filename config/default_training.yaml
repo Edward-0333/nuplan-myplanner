@@ -59,3 +59,13 @@ warmup_epochs: 3
 lr: 1e-3
 weight_decay: 0.0001
 checkpoint:
+
+
+# wandb settings
+wandb:
+  mode: disable
+  project: nuplan-pluto
+  name: ${experiment_name}
+  log_model: all
+  artifact:
+  run_id:

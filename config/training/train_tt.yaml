@@ -7,6 +7,6 @@ defaults:
         - override /data_augmentation:
         - override /splitter: nuplan
         - override /model: tt_model
-        - override /scenario_filter: training_scenarios
+        - override /scenario_filter: training_scenarios_tiny
         - override /trainer: tt_trainer
         - override /lightning: tt_lightning
