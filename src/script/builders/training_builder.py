@@ -95,8 +95,8 @@ def build_trainer_tt(cfg: DictConfig) -> pl.Trainer:
             save_last=True,
         ),
         RichModelSummary(max_depth=1),
-        RichProgressBar(),
-        LearningRateMonitor(logging_interval="epoch"),
+        # RichProgressBar(),
+        # LearningRateMonitor(logging_interval="epoch"),
     ]
 
     if cfg.wandb.mode == "disable":

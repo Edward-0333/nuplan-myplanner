@@ -24,10 +24,14 @@ set_default_path()
 # If set, use the env. variable to overwrite the Hydra config
 CONFIG_PATH = os.getenv('NUPLAN_HYDRA_CONFIG_PATH', './config')
 CONFIG_NAME = 'default_training'
-os.environ['NUPLAN_MAPS_ROOT']="/home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/dataset/maps"
-os.environ['NUPLAN_DATA_ROOT']="/home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/dataset"
-os.environ['NUPLAN_EXP_ROOT']="/home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp"
-os.environ['HYDRA_FULL_ERROR'] = '1'
+# 读取当前文件的父文件绝对路径
+
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+os.environ['NUPLAN_MAPS_ROOT']=f"{parent_dir}/nuplan-devkit/nuplan/dataset/maps"
+os.environ['NUPLAN_DATA_ROOT']=f"{parent_dir}/nuplan-devkit/nuplan/dataset"
+os.environ['NUPLAN_EXP_ROOT']=f"{parent_dir}/nuplan-devkit/nuplan/exp"
+
 @hydra.main(config_path=CONFIG_PATH, config_name=CONFIG_NAME)
 def main(cfg: DictConfig) -> Optional[TrainingEngine]:
     """
