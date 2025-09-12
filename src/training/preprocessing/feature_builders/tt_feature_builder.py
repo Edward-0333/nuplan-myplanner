@@ -392,7 +392,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         )
 
         ego_lanes, ego_blocks = scenario_manager.get_car_lane_id(ego_states)
-
+        ego_lanes = np.array([int(lane) for lane in ego_lanes])
+        ego_blocks = np.array([int(block) for block in ego_blocks])
         return {
             "position": position,
             "heading": heading,
@@ -438,8 +439,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         category = np.zeros((N,), dtype=np.int8)
         valid_mask = np.zeros((N, T), dtype=np.bool_)
         in_route_block = np.zeros((N,T), dtype=np.bool_)
-        lane_id = np.full((N, T),'', dtype='U10')
-        block_id = np.full((N, T),'', dtype='U10')
+        lane_id = np.zeros((N, T), dtype=np.float64)
+        block_id = np.zeros((N, T), dtype=np.float64)
         polygon = [None] * N
 
         if N == 0 or self.disable_agent:
@@ -480,12 +481,14 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 if car_block[0] != '':  # 因为有些车辆会超过地图所考虑的范围，超过范围的车辆不进行考虑
                     if int(car_block[0]) not in all_consider_block:
                         continue
+                elif car_block[0] == '':
+                    continue
                 whether_in_route_block = car_block[0] in route_block_ids
 
                 idx = agent_ids_dict[agent.track_token]
                 in_route_block[idx, t] = whether_in_route_block
-                lane_id[idx, t] = car_lane[0]
-                block_id[idx, t] = car_block[0]
+                lane_id[idx, t] = int(car_lane[0])
+                block_id[idx, t] = int(car_block[0])
                 position[idx, t] = agent.center.array
                 heading[idx, t] = agent.center.heading
                 velocity[idx, t] = agent.velocity.array
@@ -812,7 +815,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         position = np.zeros((len(reference_lines), n_points, 2), dtype=np.float64)
         vector = np.zeros((len(reference_lines), n_points, 2), dtype=np.float64)
         orientation = np.zeros((len(reference_lines), n_points), dtype=np.float64)
-        valid_mask = np.zeros((len(reference_lines), n_points), dtype=np.bool)
+        valid_mask = np.zeros((len(reference_lines), n_points), dtype=np.bool_)
         future_projection = np.zeros((len(reference_lines), 8, 2), dtype=np.float64)
 
         ego_future = ego_features["position"][self.history_samples + 1 :]

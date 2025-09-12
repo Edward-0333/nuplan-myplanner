@@ -5,14 +5,11 @@ import pytorch_lightning as pl
 from omegaconf import DictConfig
 
 from nuplan.planning.script.builders.model_builder import build_torch_module_wrapper
-from nuplan.planning.script.builders.training_builder import (
-    build_lightning_datamodule,
-)
 from nuplan.planning.script.builders.utils.utils_config import scale_cfg_for_distributed_training
 from nuplan.planning.utils.multithreading.worker_pool import WorkerPool
 
 from src.script.builders.training_builder import build_trainer_tt
-from src.script.builders.training_builder import build_lightning_module
+from src.script.builders.training_builder import build_lightning_module, build_lightning_datamodule
 logger = logging.getLogger(__name__)
 
 
@@ -46,12 +43,12 @@ def build_training_engine(cfg: DictConfig, worker: WorkerPool) -> TrainingEngine
     # Build the datamodule
     datamodule = build_lightning_datamodule(cfg, worker, torch_module_wrapper)
 
-    if cfg.lightning.trainer.params.accelerator == 'ddp':  # Update the learning rate parameters to suit ddp
-        cfg = scale_cfg_for_distributed_training(cfg, datamodule=datamodule, worker=worker)
-    else:
-        logger.info(
-            f'Updating configs based on {cfg.lightning.trainer.params.accelerator} strategy is currently not supported. Optimizer and LR Scheduler configs will not be updated.'
-        )
+    # if cfg.lightning.trainer.params.accelerator == 'ddp':  # Update the learning rate parameters to suit ddp
+    #     cfg = scale_cfg_for_distributed_training(cfg, datamodule=datamodule, worker=worker)
+    # else:
+    #     logger.info(
+    #         f'Updating configs based on {cfg.lightning.trainer.params.accelerator} strategy is currently not supported. Optimizer and LR Scheduler configs will not be updated.'
+    #     )
 
     # Build lightning module
     model = build_lightning_module(cfg, torch_module_wrapper)

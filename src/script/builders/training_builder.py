@@ -31,8 +31,59 @@ from pytorch_lightning.loggers.tensorboard import TensorBoardLogger
 from pytorch_lightning.loggers.wandb import WandbLogger
 
 import os
+from src.training.dataloader.datamoudle import CustomDataModule
 
 logger = logging.getLogger(__name__)
+
+
+def build_lightning_datamodule(
+    cfg: DictConfig, worker: WorkerPool, model: TorchModuleWrapper
+) -> pl.LightningDataModule:
+    """
+    Build the lightning datamodule from the config.
+    :param cfg: Omegaconf dictionary.
+    :param model: NN model used for training.
+    :param worker: Worker to submit tasks which can be executed in parallel.
+    :return: Instantiated datamodule object.
+    """
+    # Build features and targets
+    feature_builders = model.get_list_of_required_feature()
+    target_builders = model.get_list_of_computed_target()
+
+    # Build splitter
+    splitter = build_splitter(cfg.splitter)
+
+    # Create feature preprocessor
+    feature_preprocessor = FeaturePreprocessor(
+        cache_path=cfg.cache.cache_path,
+        force_feature_computation=cfg.cache.force_feature_computation,
+        feature_builders=feature_builders,
+        target_builders=target_builders,
+    )
+
+    # Create data augmentation
+    augmentors = (
+        build_agent_augmentor(cfg.data_augmentation)
+        if "data_augmentation" in cfg
+        else None
+    )
+
+    # Build dataset scenarios
+    scenarios = build_scenarios(cfg, worker, model)
+
+    # Create datamodule
+    datamodule: pl.LightningDataModule = CustomDataModule(
+        feature_preprocessor=feature_preprocessor,
+        splitter=splitter,
+        all_scenarios=scenarios,
+        dataloader_params=cfg.data_loader.params,
+        augmentors=augmentors,
+        worker=worker,
+        scenario_type_sampling_weights=cfg.scenario_type_weights.scenario_type_sampling_weights,
+        **cfg.data_loader.datamodule,
+    )
+
+    return datamodule
 
 
 def build_lightning_module(cfg: DictConfig, torch_module_wrapper: TorchModuleWrapper) -> pl.LightningModule:
