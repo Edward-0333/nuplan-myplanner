@@ -129,11 +129,11 @@ class PlanningModel(TorchModuleWrapper):
         polygon_mask = data["map"]["valid_mask"]
 
         bs, A = agent_pos.shape[0:2]
-
+        # agent_pos单独emb
         position = torch.cat([agent_pos, polygon_center[..., :2]], dim=1)
         angle = torch.cat([agent_heading, polygon_center[..., 2]], dim=1)
         angle = (angle + math.pi) % (2 * math.pi) - math.pi
-        pos = torch.cat([position, angle.unsqueeze(-1)], dim=-1) # agent+polygon, 3 means (x,y,theta)
+        pos = torch.cat([position, angle.unsqueeze(-1)], dim=-1)  # agent+polygon, 3 means (x,y,theta)
 
         agent_key_padding = ~(agent_mask.any(-1))
         polygon_key_padding = ~(polygon_mask.any(-1))

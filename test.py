@@ -1,24 +1,22 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon
+import torch
+import torch.nn as nn
 
-# 假设 A, B 是两条线段，每条有20个点
-t = np.linspace(0, 2*np.pi, 20)
-A = np.column_stack([t, np.sin(t)])         # A: y = sin(x)
-B = np.column_stack([t, np.sin(t) + 1])     # B: y = sin(x) + 1
+# 输入的维度
+embed_dim = 256  # 每个 token 的嵌入维度
+num_heads = 8  # 多头的数量
+batch_size = 32  # 批量大小
+seq_len = 10  # 序列长度
 
-# 组合多边形的点：A 正向 + B 反向
-polygon_points = np.vstack([A, B[::-1]])
+# 创建 MultiheadAttention 层
+multihead_attn = nn.MultiheadAttention(embed_dim, num_heads)
 
-# 方法1: plt.fill
-plt.plot(A[:,0], A[:,1], 'r-', label='Line A')
-plt.plot(B[:,0], B[:,1], 'b-', label='Line B')
-plt.fill(polygon_points[:,0], polygon_points[:,1], color='lightblue', alpha=0.5)
+# 输入查询（query）、键（key）和值（value）
+query = torch.rand(seq_len, batch_size, embed_dim)  # 形状 (seq_len, batch_size, embed_dim)
+key = torch.rand(seq_len, batch_size, embed_dim)  # 形状 (seq_len, batch_size, embed_dim)
+value = torch.rand(seq_len, batch_size, embed_dim)  # 形状 (seq_len, batch_size, embed_dim)
 
-# 方法2: Polygon Patch
-# poly = Polygon(polygon_points, closed=True, facecolor='lightblue', alpha=0.5)
-# plt.gca().add_patch(poly)
+# 使用 MultiheadAttention
+attn_output, attn_output_weights = multihead_attn(query, key, value)
 
-plt.legend()
-plt.axis('equal')
-plt.show()
+print("Attention Output Shape:", attn_output.shape)  # (seq_len, batch_size, embed_dim)
+print("Attention Weights Shape:", attn_output_weights.shape)  # (batch_size, num_heads, seq_len, seq_len)
