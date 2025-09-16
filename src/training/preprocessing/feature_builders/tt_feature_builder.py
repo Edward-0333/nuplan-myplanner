@@ -204,8 +204,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             radius=self.radius,
         )
         all_consider_block = set(data["map"]["polygon_road_block_id"])
-
-        # data["route_roadblocks_ids"] = route_roadblocks_ids
+        route_roadblocks_ids = [int(block) for block in route_roadblocks_ids]
+        # data["route_roadblocks_ids"] = np.array(route_roadblocks_ids)
         data["current_state"] = self._get_ego_current_state(
             ego_state_list[present_idx], ego_state_list[present_idx - 1]
         )

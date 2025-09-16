@@ -39,11 +39,21 @@ def plot_scenarios(data,scenario_name):
     polygon_on_route = map_data['polygon_on_route']  # (N,)
     polygon_road_block_id = map_data['polygon_road_block_id']  # (N,)
     polygon_road_block_id_set = set(polygon_road_block_id)
+    target_lane_matrix = data['agent']['target_lane_matrix']
     # 设置一个列表，存储每个road_block_id对应的颜色
     road_block_id_color = {}
     for road_block_id in polygon_road_block_id_set:
         road_block_id_color[road_block_id] = (random.random(), random.random(), random.random())
-
+    polygon_on_route_id = map_data['polygon_road_lane_id'][polygon_on_route]
+    # target_lane_matrix与polygon_on_route_id一一对应，提前建立lane_id到权重的映射
+    lane_id_to_target_weight: Dict[Union[int, str], float] = {}
+    if target_lane_matrix.size:
+        target_array = np.atleast_2d(np.asarray(target_lane_matrix))
+        flattened_target = target_array[0].reshape(-1)
+        for lane_idx, lane_id in enumerate(polygon_on_route_id):
+            if lane_idx < flattened_target.size:
+                lane_id_to_target_weight[lane_id] = flattened_target[lane_idx]
+    
     for t in range(101):
         fig, ax = plt.subplots(figsize=(50, 50))
         now_lane = data['agent']['lane_id'][0][t]
@@ -55,22 +65,24 @@ def plot_scenarios(data,scenario_name):
 
             polygon_points = np.vstack([positions[i,1,:,:], positions[i,2,:,:][::-1]])
             ax.plot(positions[i,0,:,0], positions[i,0,:,1], label='Ego',linestyle='dashed',color='grey')
-            # plt.plot(positions[i,1,:,0], positions[i,1,:,1], 'r-', label='Line A')
-            # plt.plot(positions[i,2,:,0], positions[i,2,:,1], 'b-', label='Line B')
-            if polygon_type[i] == 0:
-                color = 'lightblue'
-            elif polygon_type[i] == 2:
-                color = 'lightsteelblue'
-            elif polygon_type[i] == 1:
-                color = 'cyan'
+            # if polygon_type[i] == 0:
+            color = 'lightblue'
+            # elif polygon_type[i] == 2:
+            #     color = 'lightsteelblue'
+            # elif polygon_type[i] == 1:
+            #     color = 'cyan'
             road_lane_id = map_data['polygon_road_lane_id'][i]
+            target_val = lane_id_to_target_weight.get(road_lane_id)
+            if target_val is not None and target_val > 0:
+                val = float(np.clip(target_val, 0.0, 1.0))
+                color = plt.cm.get_cmap('Greens')(0.2 + 0.8 * val)
             # polygon_road_block_id_i = polygon_road_block_id[i]
             # # 绘制同一road_block_id的多边形使用相同颜色
             # color = road_block_id_color[polygon_road_block_id_i]
-            if polygon_on_route[i] == 1:
-                color = 'yellow'
-            if road_lane_id == int(now_lane):
-                color = 'green'
+            # if polygon_on_route[i] == 1:
+            #     color = 'yellow'
+            # if road_lane_id == int(now_lane):
+            #     color = 'green'
             ax.fill(polygon_points[:,0], polygon_points[:,1],
                      color=color, alpha=0.5,edgecolor='black',linewidth=2)
 
@@ -214,4 +226,3 @@ def main(cfg: DictConfig):
 
 if __name__ == '__main__':
     main()
-
