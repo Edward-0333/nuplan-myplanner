@@ -52,6 +52,7 @@ class TransformerEncoderLayer(nn.Module):
     ):
         super().__init__()
         self.norm1 = norm_layer(dim)
+        self.norm2 = norm_layer(dim)
         self.attn = torch.nn.MultiheadAttention(
             dim,
             num_heads=num_heads,
@@ -61,7 +62,8 @@ class TransformerEncoderLayer(nn.Module):
         )
         self.drop_path1 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
-        self.norm2 = norm_layer(dim)
+        self.norm3 = norm_layer(dim)
+        self.norm4 = norm_layer(dim)
         self.mlp = Mlp(
             in_features=dim,
             hidden_features=int(dim * mlp_ratio),
@@ -72,26 +74,28 @@ class TransformerEncoderLayer(nn.Module):
 
     def forward(
         self,
-        src,
+        Q,
+        KV,
         mask: Optional[Tensor] = None,
         key_padding_mask: Optional[Tensor] = None,
         return_attn_weights=False,
     ):
-        src2 = self.norm1(src)
-        src2, attn = self.attn(
-            query=src2,
-            key=src2,
-            value=src2,
+        Q = self.norm1(Q)
+        KV = self.norm2(KV)
+        Q2, attn = self.attn(
+            query=Q,
+            key=KV,
+            value=KV,
             attn_mask=mask,
             key_padding_mask=key_padding_mask,
         )
-        src = src + self.drop_path1(src2)
-        src = src + self.drop_path2(self.mlp(self.norm2(src)))
+        Q = Q + self.drop_path1(Q2)
+        Q = Q + self.drop_path2(self.mlp(self.norm2(Q)))
 
         if return_attn_weights:
-            return src, attn
+            return Q, KV, attn
 
-        return src
+        return Q, KV
 
 
 class CrossAttentionLayer(nn.Module):

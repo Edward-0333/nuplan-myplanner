@@ -203,6 +203,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             traffic_light_status=traffic_light_status,
             radius=self.radius,
         )
+        self.get_route_map(data)
         all_consider_block = set(data["map"]["polygon_road_block_id"])
         route_roadblocks_ids = [int(block) for block in route_roadblocks_ids]
         # data["route_roadblocks_ids"] = np.array(route_roadblocks_ids)
@@ -288,6 +289,12 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         state[6] = yaw_rate
 
         return state
+
+    def get_route_map(self, data):
+        print(1)
+
+
+        pass
 
     def scenario_casual_reasoning_preprocess(
         self,
