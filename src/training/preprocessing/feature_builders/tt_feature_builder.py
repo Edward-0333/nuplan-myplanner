@@ -33,7 +33,9 @@ from shapely import LineString, Point
 from src.training.preprocessing.features.tt_feature import TTFeature
 from src.training.scenario_manager.cost_map_manager import CostMapManager
 from src.training.scenario_manager.scenario_manager import OccupancyType, ScenarioManager
-from src.training.scenario_manager.utils.route_utils import get_current_roadblock_candidates, same_direction
+from src.training.scenario_manager.utils.route_utils import same_direction, get_current_roadblock
+from src.training.preprocessing.features.feature_utils import find_candidate_lanes
+
 from . import common
 
 
@@ -206,18 +208,29 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         self.get_route_map(data)
         all_consider_block = set(data["map"]["polygon_road_block_id"])
         route_roadblocks_ids = [int(block) for block in route_roadblocks_ids]
+
+        route_roadblock_dict = {}
+        for id_ in route_roadblocks_ids:
+            block = map_api.get_map_object(id_, SemanticMapLayer.ROADBLOCK)
+            block = block or map_api.get_map_object(
+                id_, SemanticMapLayer.ROADBLOCK_CONNECTOR
+            )
+            route_roadblock_dict[id_] = block
+
         # data["route_roadblocks_ids"] = np.array(route_roadblocks_ids)
         data["current_state"] = self._get_ego_current_state(
             ego_state_list[present_idx], ego_state_list[present_idx - 1]
         )
-        ego_features = self._get_ego_features(scenario_manager, ego_states=ego_state_list)
+        ego_features = self._get_ego_features(scenario_manager,ego_states=ego_state_list,route_roadblock_dict=route_roadblock_dict)
         # self.get_ego_lane_id(ego_states=ego_state_list, map_api=map_api)
         agent_features, agent_tokens, agents_polygon = self._get_agent_features(
             scenario_manager=scenario_manager,
             query_xy=query_xy,
             present_idx=present_idx,
             tracked_objects_list=tracked_objects_list,
-            all_consider_block=all_consider_block
+            all_consider_block=all_consider_block,
+            route_roadblock_dict = route_roadblock_dict,
+            map_api=map_api
         )
         data["agent"] = {}
         for k in agent_features.keys():
@@ -229,6 +242,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         data["static_objects"] = self._get_static_objects_features(
             present_ego_state, scenario_manager, tracked_objects_list[present_idx]
         )
+        data['agent']['cand_mask'], data['agent']['dict_all_lane_id']=find_candidate_lanes(data, map_api, self.history_samples + 1)
 
         if not inference:
             data["causal"] = self.scenario_casual_reasoning_preprocess(
@@ -368,7 +382,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             "free_path_points": free_path_points,
         }
 
-    def _get_ego_features(self,scenario_manager, ego_states: List[EgoState]):
+    def _get_ego_features(self,scenario_manager, ego_states: List[EgoState],route_roadblock_dict):
         """note that rear axle velocity and acceleration are in ego local frame,
         and need to be transformed to the global frame.
         """
@@ -398,7 +412,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             self.interested_objects_types.index(TrackedObjectType.EGO), dtype=np.int8
         )
 
-        ego_lanes, ego_blocks = scenario_manager.get_car_lane_id(ego_states)
+        ego_lanes, ego_blocks = scenario_manager.get_car_lane_id(ego_states,route_roadblock_dict)
         ego_lanes = np.array([int(lane) for lane in ego_lanes])
         ego_blocks = np.array([int(block) for block in ego_blocks])
         return {
@@ -420,22 +434,23 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         query_xy: Point2D,
         present_idx: int,
         tracked_objects_list: List[TrackedObjects],
-        all_consider_block
+        all_consider_block,
+        route_roadblock_dict,
+        map_api: AbstractMap
     ):
         present_tracked_objects = tracked_objects_list[present_idx]
         present_agents = present_tracked_objects.get_tracked_objects_of_types(
             self.interested_objects_types
         )
-        route_block_ids = scenario_manager.get_route_roadblock_ids()
-        agent_lanes, agent_blocks = [], []
-        now_in_route = {}
-        for agent in present_agents:
-            car_lane, car_block = scenario_manager.get_car_lane_id(agent)
-            agent_token = agent.track_token
-            agent_lanes.append(car_lane[0])
-            agent_blocks.append(car_block[0])
-            in_route_block = car_block[0] in route_block_ids
-            now_in_route[agent_token] = {"lane": car_lane[0], "block": car_block[0], "in_route_block": in_route_block}
+
+        # agent_lanes, agent_blocks = [], []
+        # now_in_route = {}
+        # for agent in present_agents:
+        #     agent_block = get_current_roadblock(agent, map_api, route_block_ids)
+        #     # car_lane, car_block = scenario_manager.get_car_lane_id(agent)
+        #     agent_token = agent.track_token
+        #     # agent_blocks.append(agent_block[0])
+            # in_route_block = agent_block in route_block_ids
 
         N, T = min(len(present_agents), self.max_agents), len(tracked_objects_list)
 
@@ -446,8 +461,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         category = np.zeros((N,), dtype=np.int8)
         valid_mask = np.zeros((N, T), dtype=np.bool_)
         in_route_block = np.zeros((N,T), dtype=np.bool_)
-        lane_id = np.zeros((N, T), dtype=np.float64)
-        block_id = np.zeros((N, T), dtype=np.float64)
+        lane_id = np.zeros((N, T), dtype=np.int64)
+        block_id = np.zeros((N, T), dtype=np.int64)
         polygon = [None] * N
 
         if N == 0 or self.disable_agent:
@@ -472,25 +487,28 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         distance = np.linalg.norm(agent_cur_pos - query_xy.array[None, :], axis=1)
         agent_ids_sorted = agent_ids[np.argsort(distance)[: self.max_agents]]
         agent_ids_dict = {agent_id: i for i, agent_id in enumerate(agent_ids_sorted)}
-
+        route_block_ids = list(route_roadblock_dict.keys())
         for t, tracked_objects in enumerate(tracked_objects_list):
             for agent in tracked_objects.get_tracked_objects_of_types(
                 self.interested_objects_types
             ):
-                # if agent.tracked_object_type == self.interested_objects_types[2]:
-                #     print(1)
                 if agent.track_token not in agent_ids_dict:
                     continue
-                # 如果正式跑程序的化，需要取消注释
-                if not now_in_route[agent.track_token]["in_route_block"]:
-                    continue
-                car_lane, car_block = scenario_manager.get_car_lane_id(agent)
+                # 如果如果需要限制在route roadblock内，则打开下面的注释
+                # if not now_in_route[agent.track_token]["in_route_block"]:
+                #     continue
+                car_lane, car_block = scenario_manager.get_car_lane_id(agent,route_roadblock_dict)
+                # if agent.tracked_object_type == self.interested_objects_types[2]:
+                #     agent_block = ''
+                # else:
+                #     agent_block = get_current_roadblock(agent, map_api, route_roadblock_dict)[0]
+
                 if car_block[0] != '':  # 因为有些车辆会超过地图所考虑的范围，超过范围的车辆不进行考虑
                     if int(car_block[0]) not in all_consider_block:
                         continue
                 elif car_block[0] == '':
                     continue
-                whether_in_route_block = car_block[0] in route_block_ids
+                whether_in_route_block = int(car_block[0]) in route_block_ids
 
                 idx = agent_ids_dict[agent.track_token]
                 in_route_block[idx, t] = whether_in_route_block

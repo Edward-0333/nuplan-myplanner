@@ -240,18 +240,10 @@ class ScenarioManager:
     def object_in_drivable_area(self, polygon: Polygon):
         return len(self._drivable_area_map.intersects(polygon)) > 0
     
-    def get_car_lane_id(self, car_states):
+    def get_car_lane_id(self, car_states,route_roadblock_dict):
         ego_blocks = []
         ego_lanes = []
-        route_lane_dict = self.get_route_lane_dicts()
-        route_roadblock_ids = self.get_route_roadblock_ids()
-        route_roadblock_dict = {}
-        for id_ in route_roadblock_ids:
-            block = self._map_api.get_map_object(id_, SemanticMapLayer.ROADBLOCK)
-            block = block or self._map_api.get_map_object(
-                id_, SemanticMapLayer.ROADBLOCK_CONNECTOR
-            )
-            route_roadblock_dict[id_] = block
+
         # 如果car_states是列表，则遍历每个状态
         if not isinstance(car_states, list):
             car_states = [car_states]

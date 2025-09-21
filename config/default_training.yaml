@@ -48,12 +48,12 @@ objective_aggregate_mode: mean # How to aggregate multiple objectives, can be 'm
 cache:
   cache_path: ${oc.env:NUPLAN_EXP_ROOT}/cache         # Local/remote path to store all preprocessed artifacts from the data pipeline
   use_cache_without_dataset: true                    # Load all existing features from a local/remote cache without loading the dataset
-  force_feature_computation: false                   # Recompute features even if a cache exists
+  force_feature_computation: true                   # Recompute features even if a cache exists
   cleanup_cache: false                                # Cleanup cached data in the cache_path, this ensures that new data are generated if the same cache_path is passed
 #worker:
 #  max_workers: 32
 # Mandatory parameters
-py_func: train                                           # Function to be run inside main (can be "train", "test", "cache")
+py_func: cache                                           # Function to be run inside main (can be "train", "test", "cache")
 epochs: 25
 warmup_epochs: 3
 lr: 1e-3

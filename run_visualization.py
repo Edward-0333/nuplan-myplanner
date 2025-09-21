@@ -39,7 +39,8 @@ def plot_scenarios(data,scenario_name):
     polygon_on_route = map_data['polygon_on_route']  # (N,)
     polygon_road_block_id = map_data['polygon_road_block_id']  # (N,)
     polygon_road_block_id_set = set(polygon_road_block_id)
-    target_lane_matrix = data['agent']['target_lane_matrix']
+    cand_mask = data['agent']['cand_mask']
+    dict_all_lane_id = data['agent']['dict_all_lane_id']
     # 设置一个列表，存储每个road_block_id对应的颜色
     road_block_id_color = {}
     for road_block_id in polygon_road_block_id_set:
@@ -47,41 +48,50 @@ def plot_scenarios(data,scenario_name):
     polygon_on_route_id = map_data['polygon_road_lane_id'][polygon_on_route]
     # target_lane_matrix与polygon_on_route_id一一对应，提前建立lane_id到权重的映射
     lane_id_to_target_weight: Dict[Union[int, str], float] = {}
-    if target_lane_matrix.size:
-        target_array = np.atleast_2d(np.asarray(target_lane_matrix))
-        flattened_target = target_array[0].reshape(-1)
-        for lane_idx, lane_id in enumerate(polygon_on_route_id):
-            if lane_idx < flattened_target.size:
-                lane_id_to_target_weight[lane_id] = flattened_target[lane_idx]
-    
+    # if target_lane_matrix.size:
+    #     target_array = np.atleast_2d(np.asarray(target_lane_matrix))
+    #     flattened_target = target_array[0].reshape(-1)
+    #     for lane_idx, lane_id in enumerate(polygon_on_route_id):
+    #         if lane_idx < flattened_target.size:
+    #             lane_id_to_target_weight[lane_id] = flattened_target[lane_idx]
+    agent = 2
     for t in range(101):
         fig, ax = plt.subplots(figsize=(50, 50))
-        now_lane = data['agent']['lane_id'][0][t]
-        now_block = data['agent']['roadblock_id'][0][t]
+        now_lane = data['agent']['lane_id'][agent][t]
+        now_block = data['agent']['roadblock_id'][agent][t]
         # plot map
         N = positions.shape[0]
         print('正在绘制场景:', scenario_name, '时间步:', t, '多边形数量:', N)
         for i in range(N):
-
+            road_lane_id = map_data['polygon_road_lane_id'][i]
+            if road_lane_id == 0:
+                cand_lane = False
+            else:
+                lane_idx = dict_all_lane_id[road_lane_id]
+                cand_lane = cand_mask[agent,t,lane_idx]
             polygon_points = np.vstack([positions[i,1,:,:], positions[i,2,:,:][::-1]])
             ax.plot(positions[i,0,:,0], positions[i,0,:,1], label='Ego',linestyle='dashed',color='grey')
+
+            if cand_lane:
+                color = 'orange'
+            else:
+                color = 'lightblue'
+
             # if polygon_type[i] == 0:
-            color = 'lightblue'
             # elif polygon_type[i] == 2:
             #     color = 'lightsteelblue'
             # elif polygon_type[i] == 1:
             #     color = 'cyan'
-            road_lane_id = map_data['polygon_road_lane_id'][i]
-            target_val = lane_id_to_target_weight.get(road_lane_id)
-            if target_val is not None and target_val > 0:
-                val = float(np.clip(target_val, 0.0, 1.0))
-                color = plt.cm.get_cmap('Greens')(0.2 + 0.8 * val)
+            # target_val = lane_id_to_target_weight.get(road_lane_id)
+            # if target_val is not None and target_val > 0:
+            #     val = float(np.clip(target_val, 0.0, 1.0))
+            #     color = plt.cm.get_cmap('Greens')(0.2 + 0.8 * val)
             # polygon_road_block_id_i = polygon_road_block_id[i]
-            # # 绘制同一road_block_id的多边形使用相同颜色
+            # 绘制同一road_block_id的多边形使用相同颜色
             # color = road_block_id_color[polygon_road_block_id_i]
             # if polygon_on_route[i] == 1:
             #     color = 'yellow'
-            # if road_lane_id == int(now_lane):
+            # if road_lane_id == int(now_lane) and road_lane_id != 0:
             #     color = 'green'
             ax.fill(polygon_points[:,0], polygon_points[:,1],
                      color=color, alpha=0.5,edgecolor='black',linewidth=2)
@@ -121,6 +131,9 @@ def plot_scenarios(data,scenario_name):
         for i in range(1, num_agents):
             if not agent_data['valid_mask'][i,t]:
                 continue
+
+            agent_block = agent_data['roadblock_id'][i,t]
+            # color = road_block_id_color[agent_block]
             rear_x  = agent_data['position'][i,t,0]
             rear_y  = agent_data['position'][i,t,1]
             L = agent_data['shape'][i,t,1]
@@ -144,6 +157,8 @@ def plot_scenarios(data,scenario_name):
                 color = 'gold'
             else:
                 color = 'grey'
+            if i == agent:
+                color = 'blue'
             # 绘制矩形
             ax.fill(global_corners[:, 0], global_corners[:, 1],
                     facecolor=color, edgecolor='k', alpha=0.5, linewidth=2)
@@ -211,7 +226,7 @@ def main(cfg: DictConfig):
     j = 0
     for file_name in file_names:
         # file_token = file_name.split('/')[-2]
-        # if not file_token=="020379f65ae95ae1":
+        # if not file_token=="b2a5c363d1dd5abe":
         #     continue
         # if j <=6:
         #     j += 1

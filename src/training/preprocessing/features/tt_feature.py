@@ -11,7 +11,7 @@ from nuplan.planning.training.preprocessing.features.abstract_model_feature impo
 from torch.nn.utils.rnn import pad_sequence
 
 from src.utils.utils import to_device, to_numpy, to_tensor
-from src.training.preprocessing.features.feature_utils import filter_on_route_map
+
 
 @dataclass
 class TTFeature(AbstractModelFeature):
@@ -266,23 +266,9 @@ class TTFeature(AbstractModelFeature):
 
             data["origin"] = center_xy
             data["angle"] = center_angle
-        # transform lane_id to probability
-        # data["agent"]["target_lane_matrix"], data["map"]["target_lane_matrix_mask"] = self.transform_lane_id_to_probability(data)
-        # # 获取仅在route上的traffic light
-        # tl_status = data["map"]["polygon_tl_status"]
-        # tl_on_route = data["map"]["polygon_on_route"]
-        # tl_status = tl_status[tl_on_route]
-        # valid_tl_status = np.ones(tl_status.shape[0], dtype=bool)
-        # data["map"]["on_route_tl_status"] = tl_status
-        # data["map"]["on_route_tl_status_mask"] = valid_tl_status
-        # 更新筛选仅在route上的lane信息
-        data['route_map'] = filter_on_route_map(data)
 
-        # valid_tl_status = np.zeros(max_lanes, dtype=bool)
-        # valid_tl_status[: tl_status.shape[0]] = True
-        # # tl_status补齐到max_lanes
-        # tl_status_pad = np.zeros(max_lanes, dtype=np.int64)
-        # tl_status_pad[: tl_status.shape[0]] = tl_status
-        # data["map"]["on_route_tl_status"] = tl_status_pad
-        # data["map"]["on_route_tl_status_mask"] = valid_tl_status
+        # 更新筛选仅在route上的lane信息
+        # data['route_map'] = filter_on_route_map(data)
+
+
         return TTFeature(data=data)

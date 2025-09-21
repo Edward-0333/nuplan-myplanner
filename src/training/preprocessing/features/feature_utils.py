@@ -1,4 +1,42 @@
 import numpy as np
+from nuplan.common.maps.maps_datatypes import SemanticMapLayer
+
+
+def find_candidate_lanes(data: dict, map_api, hist_steps):
+
+    # cand_mask: [N, T, K] - 候选车道有效的 mask (1:有效，0:无效)。
+    K = 256
+    N = data['agent']['position'].shape[0]
+    T = data['agent']['position'].shape[1]# [:,hist_steps:].shape[1]
+    cand_mask = np.zeros((N, T, K), dtype=bool)
+    all_lane_id = data['map']['polygon_road_lane_id']
+    dict_all_lane_id = {int(lid): idx for idx, lid in enumerate(all_lane_id) if int(lid) > 0}
+    target_roadblock_id = data['agent']['roadblock_id']#[:,hist_steps:]
+    target_lane_id = data['agent']['lane_id']#[:,hist_steps:]
+    assert len(dict_all_lane_id.keys())< K, f"too many lanes in the scene! > {K}"
+    for i in range(N):
+        for t in range(T):
+            if target_roadblock_id[i][t] == 0:
+                continue
+            roadblock_id = str(target_roadblock_id[i][t])
+
+            block = map_api.get_map_object(roadblock_id, SemanticMapLayer.ROADBLOCK)
+            block = block or map_api.get_map_object(
+                roadblock_id, SemanticMapLayer.ROADBLOCK_CONNECTOR
+            )
+            assert block is not None, f"roadblock {roadblock_id} not found in map!， 不对劲!"
+            for lane in block.interior_edges:
+                lane_id = int(lane.id)
+                if lane_id in dict_all_lane_id:
+                    lane_idx = dict_all_lane_id[lane_id]
+                    cand_mask[i, t, lane_idx] = True
+            for block in block.outgoing_edges:
+                for lane in block.interior_edges:
+                    lane_id = int(lane.id)
+                    if lane_id in dict_all_lane_id:
+                        lane_idx = dict_all_lane_id[lane_id]
+                        cand_mask[i, t, lane_idx] = True
+    return cand_mask, dict_all_lane_id
 
 
 def transform_lane_id_to_probability(data: dict, hist_steps=21,max_lanes = 128):
@@ -57,6 +95,39 @@ def transform_lane_id_to_probability(data: dict, hist_steps=21,max_lanes = 128):
     if np.any(nonzero_mask):
         probability_matix[nonzero_mask] = probability_matix[nonzero_mask] / row_max[nonzero_mask]
     return probability_matix, valid_mask
+
+
+def transform_lane_id_to_target(data: dict, hist_steps=21, max_lanes=128):
+    lane_id = data["map"]["polygon_road_lane_id"]
+    lane_in_route = data["map"]["polygon_on_route"]
+    lane_id = lane_id[lane_in_route]
+    assert lane_id.shape[0] < max_lanes, f"too many lanes in the scene! > {max_lanes}"
+    valid_mask = np.zeros(max_lanes, dtype=bool)
+    valid_mask[: lane_id.shape[0]] = True
+
+    agent_lane_id = data["agent"]["lane_id"]
+    # target_lane_id: (N, T_future)
+    target_lane_id = agent_lane_id[:, hist_steps:]
+    veh_mask = data["agent"]["valid_mask"][:, hist_steps - 1]
+    N = target_lane_id.shape[0]
+    # M = lane_id.shape[0]
+    test_loss(target_lane_id, veh_mask, max_lanes=max_lanes)
+    return 0,0
+
+
+def test_loss(target_lane_id,veh_mask, max_lanes=128):
+    import torch
+    import torch.nn.functional as F
+    # logits: [B, N, T, K] - 网络输出的 logits。
+    logits = torch.randn(1, target_lane_id.shape[0], target_lane_id.shape[1], max_lanes, requires_grad=True)
+    # targets: [B, N, T] - 真实的车道ID（类标签）。
+    targets = torch.from_numpy(target_lane_id).unsqueeze(0)
+    # veh_mask: [B, N] - 有效车辆的 mask (1:有效，0:无效)。
+    veh_mask = torch.from_numpy(veh_mask).unsqueeze(0)
+    print(1)
+
+
+
 
 
 def filter_on_route_map(data):
