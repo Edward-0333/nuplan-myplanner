@@ -11,7 +11,8 @@ from nuplan.planning.training.preprocessing.features.abstract_model_feature impo
 from torch.nn.utils.rnn import pad_sequence
 
 from src.utils.utils import to_device, to_numpy, to_tensor
-
+from src.training.preprocessing.features.feature_utils import filter_candidate_lane_map
+from src.training.preprocessing.features.feature_utils import find_candidate_lanes, test_loss
 
 @dataclass
 class TTFeature(AbstractModelFeature):
@@ -168,7 +169,7 @@ class TTFeature(AbstractModelFeature):
 
     @classmethod
     def normalize(
-        self, data, first_time=False, radius=None, hist_steps=21
+        self, data,map_api, first_time=False, radius=None, hist_steps=21
     ) -> TTFeature:
         cur_state = data["current_state"]
         center_xy, center_angle = cur_state[:2].copy(), cur_state[2].copy()
@@ -239,9 +240,6 @@ class TTFeature(AbstractModelFeature):
             data["agent"]["heading"][:, hist_steps:]
             - data["agent"]["heading"][:, hist_steps - 1][:, None]
         )
-        target = np.concatenate([target_position, target_heading[..., None]], -1)
-        target[~data["agent"]["valid_mask"][:, hist_steps:]] = 0
-        data["agent"]["target"] = target
 
         if first_time:
             point_position = data["map"]["point_position"]
@@ -259,6 +257,13 @@ class TTFeature(AbstractModelFeature):
             for k, v in data["map"].items():
                 data["map"][k] = v[valid_polygon]
 
+            # for k, v in data["agent"].items():
+            #     data["agent"][k] = np.where(data["agent"]["valid_mask"] == True, data["agent"][k], 0)
+
+            target = np.concatenate([target_position, target_heading[..., None]], -1)
+            target[~data["agent"]["valid_mask"][:, hist_steps:]] = 0
+            data["agent"]["target"] = target
+
             if "causal" in data:
                 data["causal"]["ego_care_red_light_mask"] = data["causal"][
                     "ego_care_red_light_mask"
@@ -267,8 +272,38 @@ class TTFeature(AbstractModelFeature):
             data["origin"] = center_xy
             data["angle"] = center_angle
 
+            data['agent']['cand_mask'], data['agent']['dict_all_lane_id']=find_candidate_lanes(data, map_api, hist_steps)
+            # filter_candidate_lane_map(data)
+            dict_all_lane_id = data['agent']['dict_all_lane_id']
+            polygon_road_lane_id = data['map']['polygon_road_lane_id']
+            candidate_lane_mask = np.zeros(polygon_road_lane_id.shape[0], dtype=bool)
+            for lane_id in dict_all_lane_id.keys():
+                lane_idx = list(dict_all_lane_id.keys()).index(lane_id)
+                candidate_lane_mask[lane_idx] = True
+            data['map']['candidate_lane_mask'] = candidate_lane_mask
+            # 筛选仅在候选车道上的多边形,更新把target_lane換成索引值
+            valid_lane_id = set(data["map"]["polygon_road_lane_id"])
+            agent_lane_id_target = np.zeros_like(data["agent"]["lane_id"])
+            dict_all_lane_id = data["agent"]["dict_all_lane_id"]
+            for i in range(data["agent"]["lane_id"].shape[0]):
+                for j in range(data["agent"]["lane_id"].shape[1]):
+                    lane_id_i = data["agent"]["lane_id"][i][j]
+                    # lane_id_i 在dict_all_lane_id中的索引
+                    if lane_id_i in dict_all_lane_id:
+                        lane_idx = list(dict_all_lane_id.keys()).index(lane_id_i)
+                        agent_lane_id_target[i][j] = lane_idx
+                    else:
+                        agent_lane_id_target[i][j] = -100
+
+                    if data["agent"]["lane_id"][i][j] in valid_lane_id:
+                        continue
+                    else:
+                        data["agent"]["valid_mask"][i][j] = False
+            data['agent']['agent_lane_id_target'] = agent_lane_id_target
+            # 删除data['map']['dict_all_lane_id']
+            if "dict_all_lane_id" in data["agent"]:
+                del data["agent"]["dict_all_lane_id"]
         # 更新筛选仅在route上的lane信息
         # data['route_map'] = filter_on_route_map(data)
-
-
+        # test_loss(data)
         return TTFeature(data=data)

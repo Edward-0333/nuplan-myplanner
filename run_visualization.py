@@ -91,8 +91,8 @@ def plot_scenarios(data,scenario_name):
             # color = road_block_id_color[polygon_road_block_id_i]
             # if polygon_on_route[i] == 1:
             #     color = 'yellow'
-            # if road_lane_id == int(now_lane) and road_lane_id != 0:
-            #     color = 'green'
+            if road_lane_id == int(now_lane) and road_lane_id != 0:
+                color = 'green'
             ax.fill(polygon_points[:,0], polygon_points[:,1],
                      color=color, alpha=0.5,edgecolor='black',linewidth=2)
 

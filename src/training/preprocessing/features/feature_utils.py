@@ -30,6 +30,8 @@ def find_candidate_lanes(data: dict, map_api, hist_steps):
                 if lane_id in dict_all_lane_id:
                     lane_idx = dict_all_lane_id[lane_id]
                     cand_mask[i, t, lane_idx] = True
+            if data['agent']['category'][i] == 2:  # 如果是行人，则不考虑连接道路
+                continue
             for block in block.outgoing_edges:
                 for lane in block.interior_edges:
                     lane_id = int(lane.id)
@@ -115,18 +117,47 @@ def transform_lane_id_to_target(data: dict, hist_steps=21, max_lanes=128):
     return 0,0
 
 
-def test_loss(target_lane_id,veh_mask, max_lanes=128):
+def test_loss(data):
     import torch
     import torch.nn.functional as F
+    max_lanes = 256
+    target_lane_id = data["agent"]["agent_lane_id_target"][:, 21:]
+    valid_mask  = data["agent"]["valid_mask"][:, 21:]
     # logits: [B, N, T, K] - 网络输出的 logits。
     logits = torch.randn(1, target_lane_id.shape[0], target_lane_id.shape[1], max_lanes, requires_grad=True)
+    B = 1
+    N = target_lane_id.shape[0]
+    T = target_lane_id.shape[1]
+    K = max_lanes
     # targets: [B, N, T] - 真实的车道ID（类标签）。
-    targets = torch.from_numpy(target_lane_id).unsqueeze(0)
+    targets = torch.from_numpy(target_lane_id).unsqueeze(0).contiguous()
     # veh_mask: [B, N] - 有效车辆的 mask (1:有效，0:无效)。
-    veh_mask = torch.from_numpy(veh_mask).unsqueeze(0)
+    valid_mask = torch.from_numpy(valid_mask).unsqueeze(0)
+    cand_mask_raw = data["agent"]["cand_mask"][:, 21:]
+    cand_mask = torch.from_numpy(cand_mask_raw).unsqueeze(0)
+    ignore_index= -100
+    if cand_mask is not None:
+        mask_logits = logits.masked_fill(cand_mask == 0, float('-inf')).contiguous()
+    else:
+        mask_logits = logits.contiguous()
+    # 2) 使用交叉熵计算每个时刻每辆车的损失
+    loss_per = F.cross_entropy(
+        mask_logits.view(-1, K),  # logits展平为 [B*N*T, K]
+        targets.view(-1),  # 目标展平为 [B*N*T]
+        reduction='none',  # 不做归约
+        ignore_index=ignore_index  # 忽略无效标签
+    ).view(B, N, T)  # 恢复为 [B, N, T] 的形状
+    loss = (loss_per * valid_mask).sum()/ valid_mask.sum().clamp_min(1.0)
     print(1)
 
-
+def filter_candidate_lane_map(data):
+    dict_all_lane_id = data['agent']['dict_all_lane_id']
+    polygon_road_lane_id = data['map']['polygon_road_lane_id']
+    candidate_lane_mask = np.zeros(polygon_road_lane_id.shape[0], dtype=bool)
+    for lane_id in dict_all_lane_id.keys():
+        lane_idx = list(dict_all_lane_id.keys()).index(lane_id)
+        candidate_lane_mask[lane_idx] = True
+    print(1)
 
 
 

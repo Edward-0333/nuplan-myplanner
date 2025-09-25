@@ -64,6 +64,7 @@ class PlanningModel(TorchModuleWrapper):
 
         self.pos_emb = FourierEmbedding(3, dim, 64)
         self.location_emb = FourierEmbedding(3, dim, 64)
+        self.static_emb = FourierEmbedding(3, dim, 64)
         self.agent_info_emb = FourierEmbedding(5, dim, 64)
         self.agent_encoder = AgentEncoder(
             state_channel=state_channel,
@@ -159,11 +160,11 @@ class PlanningModel(TorchModuleWrapper):
         agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps]
         polygon_center = data["map"]["polygon_center"]
         polygon_mask = data["map"]["valid_mask"]
-        on_route_tl_status = data["route_map"]["on_route_tl_status"].long()
-        on_route_tl_status_mask = data["route_map"]["on_route_tl_status_mask"]
-        target_lane_matrix = data["route_map"]["target_lane_matrix"]
-        test_target_lane_matrix = data["route_map"]["target_lane_matrix"][0].cpu().numpy()
-        test_target_lane_matrix1 = data["route_map"]["target_lane_matrix"][1].cpu().numpy()
+        # on_route_tl_status = data["route_map"]["on_route_tl_status"].long()
+        # on_route_tl_status_mask = data["route_map"]["on_route_tl_status_mask"]
+        # target_lane_matrix = data["route_map"]["target_lane_matrix"]
+        # test_target_lane_matrix = data["route_map"]["target_lane_matrix"][0].cpu().numpy()
+        # test_target_lane_matrix1 = data["route_map"]["target_lane_matrix"][1].cpu().numpy()
 
         bs, A = agent_pos.shape[0:2]
         # agent_pos单独emb
@@ -178,12 +179,25 @@ class PlanningModel(TorchModuleWrapper):
         for blk in self.agent_encoder_blocks:
             location_embed, x_agent = blk(location_embed, x_agent, key_padding_mask=agent_key_padding, return_attn_weights=False)
         location_embed = self.norm1(location_embed)
-        map_key_padding = ~(polygon_mask.any(-1))
-        for blk in self.map_encoder_blocks:
-            location_embed, x_polygon = blk(location_embed, x_polygon, key_padding_mask=map_key_padding, return_attn_weights=False)
-        location_embed = self.norm2(location_embed)
 
         x_static, static_pos, static_key_padding = self.static_objects_encoder(data)
+        x_static_emb = self.static_emb(static_pos)
+        x_static = x_static +x_static_emb
+
+        new_kv = torch.cat([location_embed, x_static], dim=1)
+        new_kv_mask = torch.cat([agent_key_padding, static_key_padding], dim=1)
+
+        map_key_padding = ~(polygon_mask.any(-1))
+        candidate_lane_padding = ~data['map']['candidate_lane_mask']
+        map_key_padding = torch.logical_and(map_key_padding, candidate_lane_padding)
+
+        for blk in self.map_encoder_blocks:
+            x_polygon, new_kv = blk(x_polygon, new_kv, key_padding_mask=new_kv_mask, return_attn_weights=False)
+        x_polygon = self.norm2(x_polygon).view(-1, self.dim)
+        # map_key_padding = map_key_padding.flatten()
+        # x_polygon = x_polygon[~map_key_padding]
+
+        print(1)
         x_tl_status = self.traffic_light_emb(on_route_tl_status)
         x_tl_status[~on_route_tl_status_mask] = 0
         # test = x_tl_status.clone()[0].cpu().numpy()

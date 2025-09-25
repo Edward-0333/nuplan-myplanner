@@ -34,7 +34,6 @@ from src.training.preprocessing.features.tt_feature import TTFeature
 from src.training.scenario_manager.cost_map_manager import CostMapManager
 from src.training.scenario_manager.scenario_manager import OccupancyType, ScenarioManager
 from src.training.scenario_manager.utils.route_utils import same_direction, get_current_roadblock
-from src.training.preprocessing.features.feature_utils import find_candidate_lanes
 
 from . import common
 
@@ -205,7 +204,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             traffic_light_status=traffic_light_status,
             radius=self.radius,
         )
-        self.get_route_map(data)
+        # self.get_route_map(data)
         all_consider_block = set(data["map"]["polygon_road_block_id"])
         route_roadblocks_ids = [int(block) for block in route_roadblocks_ids]
 
@@ -242,7 +241,6 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         data["static_objects"] = self._get_static_objects_features(
             present_ego_state, scenario_manager, tracked_objects_list[present_idx]
         )
-        data['agent']['cand_mask'], data['agent']['dict_all_lane_id']=find_candidate_lanes(data, map_api, self.history_samples + 1)
 
         if not inference:
             data["causal"] = self.scenario_casual_reasoning_preprocess(
@@ -280,7 +278,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 scenario_manager, ego_features
             )
 
-        return TTFeature.normalize(data, first_time=True, radius=self.radius)
+        return TTFeature.normalize(data,map_api, first_time=True, radius=self.radius)
 
     def _get_ego_current_state(self, ego_state: EgoState, prev_state: EgoState):
         state = np.zeros(7, dtype=np.float64)
@@ -720,7 +718,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             "polygon_speed_limit": polygon_speed_limit,
             "polygon_road_block_id": polygon_road_block_id,
             "polygon_road_lane_id": polygon_road_lane_id,
-            "point_position_raw": point_position_raw
+            "point_position_raw": point_position_raw,
         }
 
         return map_features, object_ids

@@ -106,8 +106,9 @@ class CostMapManager:
         cv2.fillPoly(mask, [np.round(polygon).astype(np.int32)], value)
 
     def fill_convex_polygon(self, mask, polygon, value=1):
-        polygon = self.global_to_pixel(np.stack(polygon.exterior.coords.xy, axis=1))
-        cv2.fillConvexPoly(mask, np.round(polygon).astype(np.int32), value)
+        if polygon is not None:  # polygon為none的情況，是因為超出了考慮範圍或不在車道上
+            polygon = self.global_to_pixel(np.stack(polygon.exterior.coords.xy, axis=1))
+            cv2.fillConvexPoly(mask, np.round(polygon).astype(np.int32), value)
 
     def fill_polyline(self, mask, polyline, value=1):
         polyline = self.global_to_pixel(polyline)
