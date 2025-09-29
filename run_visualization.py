@@ -40,7 +40,7 @@ def plot_scenarios(data,scenario_name):
     polygon_road_block_id = map_data['polygon_road_block_id']  # (N,)
     polygon_road_block_id_set = set(polygon_road_block_id)
     cand_mask = data['agent']['cand_mask']
-    dict_all_lane_id = data['agent']['dict_all_lane_id']
+    # dict_all_lane_id = data['agent']['dict_all_lane_id']
     # 设置一个列表，存储每个road_block_id对应的颜色
     road_block_id_color = {}
     for road_block_id in polygon_road_block_id_set:
@@ -66,9 +66,9 @@ def plot_scenarios(data,scenario_name):
             road_lane_id = map_data['polygon_road_lane_id'][i]
             if road_lane_id == 0:
                 cand_lane = False
-            else:
-                lane_idx = dict_all_lane_id[road_lane_id]
-                cand_lane = cand_mask[agent,t,lane_idx]
+            # else:
+                # lane_idx = dict_all_lane_id[road_lane_id]
+                # cand_lane = cand_mask[agent,t,lane_idx]
             polygon_points = np.vstack([positions[i,1,:,:], positions[i,2,:,:][::-1]])
             ax.plot(positions[i,0,:,0], positions[i,0,:,1], label='Ego',linestyle='dashed',color='grey')
 

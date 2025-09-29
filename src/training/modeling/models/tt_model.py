@@ -9,7 +9,7 @@ from nuplan.planning.training.modeling.torch_module_wrapper import TorchModuleWr
 from nuplan.planning.training.preprocessing.target_builders.ego_trajectory_target_builder import (
     EgoTrajectoryTargetBuilder,
 )
-from torch.fx import map_arg
+
 
 from src.training.preprocessing.feature_builders.tt_feature_builder import TTFeatureBuilder
 from .layers.fourier_embedding import FourierEmbedding
@@ -21,6 +21,8 @@ from .modules.map_route_encoder import MapRouteEncoder
 from .modules.static_objects_encoder import StaticObjectsEncoder
 from .modules.planning_decoder import PlanningDecoder
 from .layers.mlp_layer import MLPLayer
+from .layers.linear_scorer_layer import LinearScorerLayer
+
 
 trajectory_sampling = TrajectorySampling(num_poses=8, time_horizon=8, interval_length=1)
 
@@ -62,10 +64,10 @@ class PlanningModel(TorchModuleWrapper):
         self.radius = feature_builder.radius
         self.ref_free_traj = ref_free_traj
 
-        self.pos_emb = FourierEmbedding(3, dim, 64)
+        # self.pos_emb = FourierEmbedding(3, dim, 64)
         self.location_emb = FourierEmbedding(3, dim, 64)
         self.static_emb = FourierEmbedding(3, dim, 64)
-        self.agent_info_emb = FourierEmbedding(5, dim, 64)
+        # self.agent_info_emb = FourierEmbedding(5, dim, 64)
         self.agent_encoder = AgentEncoder(
             state_channel=state_channel,
             history_channel=history_channel,
@@ -82,11 +84,11 @@ class PlanningModel(TorchModuleWrapper):
             polygon_channel=polygon_channel,
             use_lane_boundary=True,
         )
-        self.map_route_encoder = MapRouteEncoder(
-            dim=dim,
-            polygon_channel=polygon_channel,
-            use_lane_boundary=True,
-        )
+        # self.map_route_encoder = MapRouteEncoder(
+        #     dim=dim,
+        #     polygon_channel=polygon_channel,
+        #     use_lane_boundary=True,
+        # )
 
         self.static_objects_encoder = StaticObjectsEncoder(dim=dim)
 
@@ -95,47 +97,47 @@ class PlanningModel(TorchModuleWrapper):
             for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
         )
 
-        self.map_encoder_blocks = nn.ModuleList(
-            TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
-            for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
-        )
+        # self.map_encoder_blocks = nn.ModuleList(
+        #     TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
+        #     for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
+        # )
 
-        self.scene_encoder_blocks = nn.ModuleList(
-            TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
-            for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
-        )
+        # self.scene_encoder_blocks = nn.ModuleList(
+        #     TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
+        #     for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
+        # )
 
-        self.route_encoder_blocks = nn.ModuleList(
-            TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
-            for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
-        )
-
+        # self.route_encoder_blocks = nn.ModuleList(
+        #     TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
+        #     for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
+        # )
+        self.linear_scorer_layer = LinearScorerLayer(T=80, d=256)
         self.norm1 = nn.LayerNorm(dim)
-        self.norm2 = nn.LayerNorm(dim)
-        self.norm3 = nn.LayerNorm(dim)
-        self.norm4 = nn.LayerNorm(dim)
+        # self.norm2 = nn.LayerNorm(dim)
+        # self.norm3 = nn.LayerNorm(dim)
+        # self.norm4 = nn.LayerNorm(dim)
 
-        self.traffic_light_emb = nn.Embedding(4, dim)
+        # self.traffic_light_emb = nn.Embedding(4, dim)
 
-        self.agent_predictor = AgentPredictor(dim=dim, future_steps=future_steps)
-        self.planning_decoder = PlanningDecoder(
-            num_mode=num_modes,
-            decoder_depth=decoder_depth,
-            dim=dim,
-            num_heads=num_heads,
-            mlp_ratio=4,
-            dropout=dropout,
-            cat_x=cat_x,
-            future_steps=future_steps,
-        )
+        # self.agent_predictor = AgentPredictor(dim=dim, future_steps=future_steps)
+        # self.planning_decoder = PlanningDecoder(
+        #     num_mode=num_modes,
+        #     decoder_depth=decoder_depth,
+        #     dim=dim,
+        #     num_heads=num_heads,
+        #     mlp_ratio=4,
+        #     dropout=dropout,
+        #     cat_x=cat_x,
+        #     future_steps=future_steps,
+        # )
 
-        if use_hidden_proj:
-            self.hidden_proj = nn.Sequential(
-                nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim)
-            )
+        # if use_hidden_proj:
+        #     self.hidden_proj = nn.Sequential(
+        #         nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim)
+        #     )
 
-        if self.ref_free_traj:
-            self.ref_free_decoder = MLPLayer(dim, 2 * dim, future_steps * 4)
+        # if self.ref_free_traj:
+        #     self.ref_free_decoder = MLPLayer(dim, 2 * dim, future_steps * 4)
 
         # self.apply(self._init_weights)
 
@@ -176,55 +178,61 @@ class PlanningModel(TorchModuleWrapper):
         x_polygon = self.map_encoder(data)
         agent_key_padding = ~(agent_mask.any(-1))
 
-        for blk in self.agent_encoder_blocks:
-            location_embed, x_agent = blk(location_embed, x_agent, key_padding_mask=agent_key_padding, return_attn_weights=False)
-        location_embed = self.norm1(location_embed)
-
         x_static, static_pos, static_key_padding = self.static_objects_encoder(data)
         x_static_emb = self.static_emb(static_pos)
         x_static = x_static +x_static_emb
 
-        new_kv = torch.cat([location_embed, x_static], dim=1)
+        new_kv = torch.cat([x_agent, x_static], dim=1)
         new_kv_mask = torch.cat([agent_key_padding, static_key_padding], dim=1)
 
-        map_key_padding = ~(polygon_mask.any(-1))
-        candidate_lane_padding = ~data['map']['candidate_lane_mask']
-        map_key_padding = torch.logical_and(map_key_padding, candidate_lane_padding)
+        for blk in self.agent_encoder_blocks:
+            location_embed, new_kv = blk(location_embed, new_kv, key_padding_mask=new_kv_mask, return_attn_weights=False)
+        location_embed = self.norm1(location_embed)
 
-        for blk in self.map_encoder_blocks:
-            x_polygon, new_kv = blk(x_polygon, new_kv, key_padding_mask=new_kv_mask, return_attn_weights=False)
-        x_polygon = self.norm2(x_polygon).view(-1, self.dim)
-        # map_key_padding = map_key_padding.flatten()
-        # x_polygon = x_polygon[~map_key_padding]
+        map_key_padding = polygon_mask.any(-1)
+        candidate_lane_padding = data['map']['candidate_lane_mask']
+        map_key_padding = ~torch.logical_and(map_key_padding, candidate_lane_padding)
 
-        print(1)
-        x_tl_status = self.traffic_light_emb(on_route_tl_status)
-        x_tl_status[~on_route_tl_status_mask] = 0
-        # test = x_tl_status.clone()[0].cpu().numpy()
-        # test1 = x_tl_status.clone()[1].cpu().numpy()
+        logits, probs = self.linear_scorer_layer(location_embed, x_polygon, agent_mask=agent_key_padding, lane_mask=map_key_padding)
+        # test = probs[0][0].cpu().numpy()
+        #
+        # for blk in self.map_encoder_blocks:
+        #     x_polygon, new_kv = blk(x_polygon, new_kv, key_padding_mask=new_kv_mask, return_attn_weights=False)
+        # x_polygon = self.norm2(x_polygon).view(-1, self.dim)
+        # # map_key_padding = map_key_padding.flatten()
+        # # x_polygon = x_polygon[~map_key_padding]
+        #
+        # print(1)
+        # x_tl_status = self.traffic_light_emb(on_route_tl_status)
+        # x_tl_status[~on_route_tl_status_mask] = 0
+        # # test = x_tl_status.clone()[0].cpu().numpy()
+        # # test1 = x_tl_status.clone()[1].cpu().numpy()
+        #
+        # agent_location_copy = agent_location.clone()
+        # agent_information = torch.cat([agent_location_copy, agent_vel], dim=-1)
+        # x_agent_info = self.agent_info_emb(agent_information)
+        # x_scene = torch.cat((x_agent_info, x_static, x_tl_status), dim=1)
+        # scene_key_padding = torch.cat((agent_key_padding, static_key_padding, ~on_route_tl_status_mask), dim=-1)
+        # # test = ~on_route_tl_status_mask[0].cpu().numpy()
+        # # test2 = ~on_route_tl_status_mask[1].cpu().numpy()
+        # for blk in self.scene_encoder_blocks:
+        #     location_embed, x_scene, attn = blk(location_embed, x_scene, key_padding_mask=scene_key_padding, return_attn_weights=True)
+        # location_embed = self.norm3(location_embed)
+        #
+        # x_route_polygon = self.map_route_encoder(data)
+        # route_key_padding = data['route_map']['on_route_tl_status_mask']
+        # for blk in self.route_encoder_blocks:
+        #     location_embed, x_route_polygon = blk(location_embed, x_route_polygon, key_padding_mask=~route_key_padding, return_attn_weights=False)
+        # location_embed = self.norm4(location_embed) # 可以直接用作后续的车道分类，与target_lane_matrix
+        # route_key_padding = F.pad(route_key_padding, (0, location_embed.shape[2] - route_key_padding.shape[1]), value=False)
+        #
+        # # test1 = route_key_padding[0].cpu().numpy()
+        # # test2 = route_key_padding[1].cpu().numpy()
+        # temp = route_key_padding.unsqueeze(1).expand(-1, location_embed.shape[1], -1)
+        # location_embed[~temp] = 0
+        # # test3 = location_embed[0].cpu().numpy()
+        # # test4 = location_embed[1].cpu().numpy()
+        out = {}
+        out["target_lane_probs"] = probs
 
-        agent_location_copy = agent_location.clone()
-        agent_information = torch.cat([agent_location_copy, agent_vel], dim=-1)
-        x_agent_info = self.agent_info_emb(agent_information)
-        x_scene = torch.cat((x_agent_info, x_static, x_tl_status), dim=1)
-        scene_key_padding = torch.cat((agent_key_padding, static_key_padding, ~on_route_tl_status_mask), dim=-1)
-        # test = ~on_route_tl_status_mask[0].cpu().numpy()
-        # test2 = ~on_route_tl_status_mask[1].cpu().numpy()
-        for blk in self.scene_encoder_blocks:
-            location_embed, x_scene, attn = blk(location_embed, x_scene, key_padding_mask=scene_key_padding, return_attn_weights=True)
-        location_embed = self.norm3(location_embed)
-
-        x_route_polygon = self.map_route_encoder(data)
-        route_key_padding = data['route_map']['on_route_tl_status_mask']
-        for blk in self.route_encoder_blocks:
-            location_embed, x_route_polygon = blk(location_embed, x_route_polygon, key_padding_mask=~route_key_padding, return_attn_weights=False)
-        location_embed = self.norm4(location_embed) # 可以直接用作后续的车道分类，与target_lane_matrix
-        route_key_padding = F.pad(route_key_padding, (0, location_embed.shape[2] - route_key_padding.shape[1]), value=False)
-
-        # test1 = route_key_padding[0].cpu().numpy()
-        # test2 = route_key_padding[1].cpu().numpy()
-        temp = route_key_padding.unsqueeze(1).expand(-1, location_embed.shape[1], -1)
-        location_embed[~temp] = 0
-        # test3 = location_embed[0].cpu().numpy()
-        # test4 = location_embed[1].cpu().numpy()
-        return location_embed
+        return out

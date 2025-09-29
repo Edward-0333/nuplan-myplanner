@@ -102,86 +102,40 @@ class LightningTrainer(pl.LightningModule):
         res = self.forward(features["feature"].data)
 
         losses = self._compute_objectives(res, features["feature"].data)
-        metrics = self._compute_metrics(res, features["feature"].data, prefix)
-        self._log_step(losses["loss"], losses, metrics, prefix)
+        # metrics = self._compute_metrics(res, features["feature"].data, prefix)
+        self._log_step(losses["loss"], losses, None, prefix)
 
         return losses["loss"] if self.training else 0.0
 
     def _compute_objectives(self, res, data) -> Dict[str, torch.Tensor]:
-        bs, _, T, _ = res["prediction"].shape
+        ignore_index = -100
+        target_lane_probs = res["target_lane_probs"]
+        target_lane = data["agent"]['agent_lane_id_target']
+        agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps]
+        agent_mask = ~(agent_mask.any(-1))
+        polygon_mask = data["map"]["valid_mask"]
+        map_key_padding = polygon_mask.any(-1)
+        candidate_lane_padding = data['map']['candidate_lane_mask']
+        lane_mask = ~torch.logical_and(map_key_padding, candidate_lane_padding)
 
-        if self.use_contrast_loss:
-            train_num = (bs // 3) * 2 if self.training else bs
-        else:
-            train_num = bs
+        B, N, T, K = target_lane_probs.shape
+        # lane_mask -> -inf
+        if lane_mask is not None:
+            target_lane_probs = target_lane_probs.masked_fill(lane_mask.unsqueeze(1).unsqueeze(1), float('-inf'))
+        loss = F.cross_entropy(
+            target_lane_probs.view(-1, K),
+            target_lane.view(-1),
+            reduction='none',
+            ignore_index=ignore_index
+        ).view(B, N, T)
 
-        trajectory, probability, prediction = (
-            res["trajectory"][:train_num],
-            res["probability"][:train_num],
-            res["prediction"][:train_num],
-        )
-        ref_free_trajectory = res.get("ref_free_trajectory", None)
+        valid = torch.ones_like(loss, dtype=torch.float, device=loss.device)
+        if agent_mask is not None:
+            valid = valid * (~agent_mask).float().unsqueeze(-1)
 
-        targets_pos = data["agent"]["target"][:train_num]
-        valid_mask = data["agent"]["valid_mask"][:train_num, :, -T:]
-        targets_vel = data["agent"]["velocity"][:train_num, :, -T:]
-
-        target = torch.cat(
-            [
-                targets_pos[..., :2],
-                torch.stack(
-                    [targets_pos[..., 2].cos(), targets_pos[..., 2].sin()], dim=-1
-                ),
-                targets_vel,
-            ],
-            dim=-1,
-        )
-
-        # planning loss
-        ego_reg_loss, ego_cls_loss, collision_loss = self.get_planning_loss(
-            data, trajectory, probability, valid_mask[:, 0], target[:, 0], train_num
-        )
-        if ref_free_trajectory is not None:
-            ego_ref_free_reg_loss = F.smooth_l1_loss(
-                ref_free_trajectory[:train_num],
-                target[:, 0, :, : ref_free_trajectory.shape[-1]],
-                reduction="none",
-            ).sum(-1)
-            ego_ref_free_reg_loss = (
-                ego_ref_free_reg_loss * valid_mask[:, 0]
-            ).sum() / valid_mask[:, 0].sum()
-        else:
-            ego_ref_free_reg_loss = ego_reg_loss.new_zeros(1)
-
-        # prediction loss
-        prediction_loss = self.get_prediction_loss(
-            data, prediction, valid_mask[:, 1:], target[:, 1:]
-        )
-
-        if self.training and self.use_contrast_loss:
-            contrastive_loss = self._compute_contrastive_loss(
-                res["hidden"], data["data_n_valid_mask"]
-            )
-        else:
-            contrastive_loss = prediction_loss.new_zeros(1)
-
-        loss = (
-            ego_reg_loss
-            + ego_cls_loss
-            + prediction_loss
-            + contrastive_loss
-            + collision_loss
-            + ego_ref_free_reg_loss
-        )
-
+        loss = (loss * valid).sum() / (valid.sum().clamp_min(1.0))
         return {
             "loss": loss,
-            "reg_loss": ego_reg_loss.item(),
-            "cls_loss": ego_cls_loss.item(),
-            "ref_free_reg_loss": ego_ref_free_reg_loss.item(),
-            "collision_loss": collision_loss.item(),
-            "prediction_loss": prediction_loss.item(),
-            "contrastive_loss": contrastive_loss.item(),
         }
 
     def get_prediction_loss(self, data, prediction, valid_mask, target):
@@ -477,7 +431,11 @@ class LightningTrainer(pl.LightningModule):
         )
 
         return [optimizer], [scheduler]
-
+    def on_after_backward(self):
+        if self.trainer.is_global_zero:
+            unused = [n for n,p in self.named_parameters() if p.requires_grad and p.grad is None]
+            if unused:
+                self.print("[unused this step]:\n" + "\n".join(unused))
     # def on_before_optimizer_step(self, optimizer) -> None:
     #     for name, param in self.named_parameters():
     #         if param.grad is None:

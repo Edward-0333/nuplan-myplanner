@@ -62,8 +62,8 @@ class TransformerEncoderLayer(nn.Module):
         )
         self.drop_path1 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
-        self.norm3 = norm_layer(dim)
-        self.norm4 = norm_layer(dim)
+        # self.norm3 = norm_layer(dim)
+        # self.norm4 = norm_layer(dim)
         self.mlp = Mlp(
             in_features=dim,
             hidden_features=int(dim * mlp_ratio),

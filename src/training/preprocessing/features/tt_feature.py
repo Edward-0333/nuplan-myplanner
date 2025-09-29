@@ -299,7 +299,7 @@ class TTFeature(AbstractModelFeature):
                         continue
                     else:
                         data["agent"]["valid_mask"][i][j] = False
-            data['agent']['agent_lane_id_target'] = agent_lane_id_target
+            data['agent']['agent_lane_id_target'] = agent_lane_id_target[:, hist_steps:]
             # 删除data['map']['dict_all_lane_id']
             if "dict_all_lane_id" in data["agent"]:
                 del data["agent"]["dict_all_lane_id"]
