@@ -109,7 +109,7 @@ class LightningTrainer(pl.LightningModule):
 
     def _compute_objectives(self, res, data) -> Dict[str, torch.Tensor]:
         ignore_index = -100
-        target_lane_probs = res["target_lane_probs"]
+        target_lane_logits = res["target_lane_logits"]
         target_lane = data["agent"]['agent_lane_id_target']
         agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps]
         agent_mask = ~(agent_mask.any(-1))
@@ -118,12 +118,15 @@ class LightningTrainer(pl.LightningModule):
         candidate_lane_padding = data['map']['candidate_lane_mask']
         lane_mask = ~torch.logical_and(map_key_padding, candidate_lane_padding)
 
-        B, N, T, K = target_lane_probs.shape
-        # lane_mask -> -inf
+        B, N, T, K = target_lane_logits.shape
+        # lane_mask -> large negative logits so masked lanes are ignored by softmax
         if lane_mask is not None:
-            target_lane_probs = target_lane_probs.masked_fill(lane_mask.unsqueeze(1).unsqueeze(1), float('-inf'))
+            target_lane_logits = target_lane_logits.masked_fill(
+                lane_mask.unsqueeze(1).unsqueeze(1),
+                float('-1e9'),
+            )
         loss = F.cross_entropy(
-            target_lane_probs.view(-1, K),
+            target_lane_logits.view(-1, K),
             target_lane.view(-1),
             reduction='none',
             ignore_index=ignore_index
@@ -436,7 +439,3 @@ class LightningTrainer(pl.LightningModule):
             unused = [n for n,p in self.named_parameters() if p.requires_grad and p.grad is None]
             if unused:
                 self.print("[unused this step]:\n" + "\n".join(unused))
-    # def on_before_optimizer_step(self, optimizer) -> None:
-    #     for name, param in self.named_parameters():
-    #         if param.grad is None:
-    #             print("unused param", name)

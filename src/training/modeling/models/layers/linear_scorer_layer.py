@@ -81,11 +81,6 @@ class LinearScorerLayer(nn.Module):
             invalid_agents = (agent_mask).unsqueeze(-1).unsqueeze(-1)  # [B,N,1,1]
             logits = logits + invalid_agents.float() * (-1e9)  # [B,N,T,K]
 
-        # 可选：time 屏蔽（有 time_mask 时同理处理）
-        if time_mask is not None:  # time_mask:[B,T] bool
-            invalid_t = (time_mask).unsqueeze(1).unsqueeze(-1)  # [B,1,T,1]
-            logits = logits + invalid_t.float() * (-1e9)
-
         probs = logits.softmax(dim=-1)  # [B,N,T,K]
 
         # 如果希望在输出的 probs 中直接把无效 agent 的概率置 0（不强制归一）
