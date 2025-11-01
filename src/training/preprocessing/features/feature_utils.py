@@ -3,13 +3,13 @@ from nuplan.common.maps.maps_datatypes import SemanticMapLayer
 
 
 def find_candidate_lanes(data: dict, map_api, hist_steps):
+    all_lane_id = data['map']['polygon_road_lane_id']
 
     # cand_mask: [N, T, K] - 候选车道有效的 mask (1:有效，0:无效)。
-    K = 256
+    K = len(all_lane_id)
     N = data['agent']['position'].shape[0]
     T = data['agent']['position'].shape[1]# [:,hist_steps:].shape[1]
-    cand_mask = np.zeros((N, T, K), dtype=bool)
-    all_lane_id = data['map']['polygon_road_lane_id']
+    cand_valid = np.zeros((N, T, K), dtype=bool)
     dict_all_lane_id = {int(lid): idx for idx, lid in enumerate(all_lane_id) if int(lid) > 0}
     target_roadblock_id = data['agent']['roadblock_id']#[:,hist_steps:]
     target_lane_id = data['agent']['lane_id']#[:,hist_steps:]
@@ -29,7 +29,7 @@ def find_candidate_lanes(data: dict, map_api, hist_steps):
                 lane_id = int(lane.id)
                 if lane_id in dict_all_lane_id:
                     lane_idx = dict_all_lane_id[lane_id]
-                    cand_mask[i, t, lane_idx] = True
+                    cand_valid[i, t, lane_idx] = True
             if data['agent']['category'][i] == 2:  # 如果是行人，则不考虑连接道路
                 continue
             for block in block.outgoing_edges:
@@ -37,8 +37,8 @@ def find_candidate_lanes(data: dict, map_api, hist_steps):
                     lane_id = int(lane.id)
                     if lane_id in dict_all_lane_id:
                         lane_idx = dict_all_lane_id[lane_id]
-                        cand_mask[i, t, lane_idx] = True
-    return cand_mask, dict_all_lane_id
+                        cand_valid[i, t, lane_idx] = True
+    return cand_valid, dict_all_lane_id
 
 
 def transform_lane_id_to_probability(data: dict, hist_steps=21,max_lanes = 128):
