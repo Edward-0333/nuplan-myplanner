@@ -13,6 +13,7 @@ from torch.nn.utils.rnn import pad_sequence
 from src.utils.utils import to_device, to_numpy, to_tensor
 from src.training.preprocessing.features.feature_utils import filter_candidate_lane_map
 from src.training.preprocessing.features.feature_utils import find_candidate_lanes, test_loss
+import torch.nn.functional as F
 
 @dataclass
 class TTFeature(AbstractModelFeature):
@@ -82,6 +83,19 @@ class TTFeature(AbstractModelFeature):
                 )
         else:
             for key in pad_keys:
+                if 'lane_cand_valid' in feature_list[0].data[key]:
+                    lane_cand_valid_shape = [f.data[key]['lane_cand_valid'].shape[-1] for f in feature_list]
+                    max_len = max(lane_cand_valid_shape)
+                    for f in feature_list:
+                        cur_len = f.data[key]['lane_cand_valid'].shape[-1]
+                        if cur_len < max_len:
+                            pad_width =  (0, max_len - cur_len)
+                            f.data[key]['lane_cand_valid'] = F.pad(
+                                f.data[key]['lane_cand_valid'],
+                                pad_width,
+                                mode='constant',
+                                value=False
+                            )
                 batch_data[key] = {
                     k: pad_sequence(
                         [f.data[key][k] for f in feature_list], batch_first=True
@@ -272,7 +286,7 @@ class TTFeature(AbstractModelFeature):
             data["origin"] = center_xy
             data["angle"] = center_angle
 
-            data['agent']['cand_mask'], data['agent']['dict_all_lane_id']=find_candidate_lanes(data, map_api, hist_steps)
+            data['agent']['lane_cand_valid'], data['agent']['dict_all_lane_id']=find_candidate_lanes(data, map_api, hist_steps)
             # filter_candidate_lane_map(data)
             dict_all_lane_id = data['agent']['dict_all_lane_id']
             polygon_road_lane_id = data['map']['polygon_road_lane_id']
