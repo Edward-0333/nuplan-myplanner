@@ -111,20 +111,25 @@ class LightningTrainer(pl.LightningModule):
         ignore_index = -100
         target_lane_logits = res["target_lane_logits"]
         target_lane = data["agent"]['agent_lane_id_target']
-        agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps]
-        agent_mask = ~(agent_mask.any(-1))
-        polygon_mask = data["map"]["valid_mask"]
-        map_key_padding = polygon_mask.any(-1)
-        candidate_lane_padding = data['map']['candidate_lane_mask']
-        lane_mask = ~torch.logical_and(map_key_padding, candidate_lane_padding)
+        agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps-1]
+
+        cand_mask = data['agent']['cand_mask'][:, :, self.history_steps:]
 
         B, N, T, K = target_lane_logits.shape
-        # lane_mask -> large negative logits so masked lanes are ignored by softmax
-        if lane_mask is not None:
-            target_lane_logits = target_lane_logits.masked_fill(
-                lane_mask.unsqueeze(1).unsqueeze(1),
-                float('-1e9'),
-            )
+        # 下面的操作是重复的，所以注释掉了
+        # agent_mask = ~(agent_mask.any(-1))
+        # polygon_mask = data["map"]["valid_mask"]
+        # map_key_padding = polygon_mask.any(-1)
+        # candidate_lane_padding = data['map']['candidate_lane_mask']
+        # lane_mask = ~torch.logical_and(map_key_padding, candidate_lane_padding)
+        #
+        # # lane_mask -> large negative logits so masked lanes are ignored by softmax
+        # if lane_mask is not None:
+        #     target_lane_logits = target_lane_logits.masked_fill(
+        #         lane_mask.unsqueeze(1).unsqueeze(1),
+        #         float('-1e9'),
+        #     )
+
         loss = F.cross_entropy(
             target_lane_logits.view(-1, K),
             target_lane.view(-1),
