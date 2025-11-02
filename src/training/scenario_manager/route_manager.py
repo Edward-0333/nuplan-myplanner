@@ -25,6 +25,7 @@ from shapely.geometry import Point
 from .occupancy_map import OccupancyMap
 from .utils.dijkstra import Dijkstra
 from .utils.route_utils import normalize_angle, route_roadblock_correction
+from nuplan.common.actor_state.agent import Agent
 
 
 class RouteManager:
@@ -104,6 +105,9 @@ class RouteManager:
             centerline_discrete_path.extend(lane.baseline_path.discrete_path)
 
         return centerline_discrete_path
+
+    def get_now_lane(self, ego_state: EgoState) -> Optional[LaneGraphEdgeMapObject]:
+        return self._get_starting_lane(ego_state)
 
     def get_reference_lines(self, ego_state: EgoState, interval=1.0, length=100):
         discrete_paths = []
@@ -258,8 +262,10 @@ class RouteManager:
                 if edge.contains_point(ego_state.center):
                     starting_lane = edge
                     break
-
-                distance = edge.polygon.distance(ego_state.car_footprint.geometry)
+                if isinstance(ego_state, EgoState):
+                    distance = edge.polygon.distance(ego_state.car_footprint.geometry)
+                elif isinstance(ego_state, Agent):
+                    distance = edge.polygon.distance(ego_state.box.geometry)
                 if distance < closest_distance:
                     starting_lane = edge
                     closest_distance = distance
@@ -274,10 +280,17 @@ class RouteManager:
         :param ego_state: state of ego-vehicle
         :return: tuple of lists with lane objects and heading errors [rad].
         """
+        if isinstance(ego_state, EgoState):
 
-        ego_position_array: npt.NDArray[np.float64] = ego_state.rear_axle.array
-        ego_rear_axle_point: Point = Point(*ego_position_array)
-        ego_heading: float = ego_state.rear_axle.heading
+            ego_position_array: npt.NDArray[np.float64] = ego_state.rear_axle.array
+            ego_rear_axle_point: Point = Point(*ego_position_array)
+            ego_heading: float = ego_state.rear_axle.heading
+        else:
+            ego_position_array: npt.NDArray[np.float64] = np.array(
+                [ ego_state.center.x,  ego_state.center.y], dtype=np.float64
+            )
+            ego_rear_axle_point: Point = Point(*ego_position_array)
+            ego_heading: float = ego_state.center.heading
 
         intersecting_lanes = self._drivable_area_map.intersects(ego_rear_axle_point)
 
