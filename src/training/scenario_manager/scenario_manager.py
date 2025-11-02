@@ -283,6 +283,20 @@ class ScenarioManager:
         return np.array(ego_lanes), np.array(ego_blocks)
 
 
+    def get_car_lane_id_optimize(self, car_states):
+        current_lanes = []
+        current_blocks = []
+        # 如果car_states不是列表，则将其转换为列表
+        if not isinstance(car_states, list):
+            car_states = [car_states]
+        for i, car_state in enumerate(car_states):
+            current_lane = self._route_manager.get_now_lane(car_state)
+            current_block = current_lane.parent
+            current_lane_id = current_lane.id
+            current_block_id = current_block.id
+            current_lanes.append(current_lane_id)
+            current_blocks.append(current_block_id)
 
+        return np.array(current_lanes), np.array(current_blocks)
 
 
