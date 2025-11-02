@@ -66,6 +66,7 @@ class PlanningModel(TorchModuleWrapper):
 
         self.location_emb = FourierEmbedding(3, dim, 64)
         self.static_emb = FourierEmbedding(3, dim, 64)
+        self.polygon_center_emb = FourierEmbedding(3, dim, 64)
         self.agent_encoder = AgentEncoder(
             state_channel=state_channel,
             history_channel=history_channel,
@@ -85,7 +86,12 @@ class PlanningModel(TorchModuleWrapper):
 
         self.static_objects_encoder = StaticObjectsEncoder(dim=dim)
 
-        self.agent_encoder_blocks = nn.ModuleList(
+        # self.agent_encoder_blocks = nn.ModuleList(
+        #     TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
+        #     for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
+        # )
+
+        self.feature_fusion_blocks = nn.ModuleList(
             TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
             for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
         )
@@ -120,28 +126,39 @@ class PlanningModel(TorchModuleWrapper):
         agent_heading = (agent_heading + math.pi) % (2 * math.pi) - math.pi
         agent_location = torch.cat([agent_pos, agent_heading.unsqueeze(-1)], dim=-1)
         location_embed = self.location_emb(agent_location)
-
         x_agent = self.agent_encoder(data)
-        x_polygon = self.map_encoder(data)
-        agent_key_padding = ~(agent_mask.any(-1))
 
+        polygon_center_embed = self.polygon_center_emb(polygon_center)
+        x_polygon = self.map_encoder(data)
         x_static, static_pos, static_key_padding = self.static_objects_encoder(data)
         x_static_emb = self.static_emb(static_pos)
+
+        agent_key_padding = ~(agent_mask.any(-1))
+        map_key_padding = ~(polygon_mask.any(-1))
+
         x_static = x_static +x_static_emb
+        x_agent = location_embed + x_agent
+        x_polygon = x_polygon + polygon_center_embed
+        new_x = torch.cat([x_agent,x_static,  x_polygon], dim=1)
+        new_mask = torch.cat([agent_key_padding, static_key_padding, map_key_padding], dim=1)
 
-        new_kv = torch.cat([x_agent, x_static], dim=1)
-        new_kv_mask = torch.cat([agent_key_padding, static_key_padding], dim=1)
+        for blk in self.feature_fusion_blocks:
+            new_x, _ = blk(new_x, new_x, key_padding_mask=new_mask, return_attn_weights=False)
+        new_x = self.norm1(new_x)
+        x_agent = new_x[:, :A, :]
+        # new_kv = torch.cat([x_agent, x_static], dim=1)
+        # new_kv_mask = torch.cat([agent_key_padding, static_key_padding], dim=1)
 
-        for blk in self.agent_encoder_blocks:
-            location_embed, new_kv = blk(location_embed, new_kv, key_padding_mask=new_kv_mask, return_attn_weights=False)
-        location_embed = self.norm1(location_embed)
+        # for blk in self.agent_encoder_blocks:
+        #     location_embed, new_kv = blk(location_embed, new_kv, key_padding_mask=new_kv_mask, return_attn_weights=False)
+        # location_embed = self.norm1(location_embed)
 
         map_key_padding = polygon_mask.any(-1)
-        candidate_lane_padding = data['map']['candidate_lane_mask']
-        map_key_padding = ~torch.logical_and(map_key_padding, candidate_lane_padding)
+        candidate_lane_mask= data['map']['candidate_lane_mask']
+        map_key_padding = ~torch.logical_and(map_key_padding, candidate_lane_mask)
 
         logits, probs = self.linear_scorer_layer(
-            location_embed,
+            x_agent,
             x_polygon,
             agent_mask=agent_key_padding,
             lane_mask=map_key_padding,
