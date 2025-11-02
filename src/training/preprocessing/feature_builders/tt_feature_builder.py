@@ -410,7 +410,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             self.interested_objects_types.index(TrackedObjectType.EGO), dtype=np.int8
         )
 
-        ego_lanes, ego_blocks = scenario_manager.get_car_lane_id(ego_states,route_roadblock_dict)
+        ego_lanes, ego_blocks = scenario_manager.get_car_lane_id_optimize(ego_states)
         ego_lanes = np.array([int(lane) for lane in ego_lanes])
         ego_blocks = np.array([int(block) for block in ego_blocks])
         return {
@@ -495,7 +495,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 # 如果如果需要限制在route roadblock内，则打开下面的注释
                 # if not now_in_route[agent.track_token]["in_route_block"]:
                 #     continue
-                car_lane, car_block = scenario_manager.get_car_lane_id(agent,route_roadblock_dict)
+                car_lane, car_block = scenario_manager.get_car_lane_id_optimize(agent)
                 # if agent.tracked_object_type == self.interested_objects_types[2]:
                 #     agent_block = ''
                 # else:
