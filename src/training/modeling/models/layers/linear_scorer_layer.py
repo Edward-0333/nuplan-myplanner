@@ -76,15 +76,15 @@ class LinearScorerLayer(nn.Module):
         if lane_mask is not None:  # lane_mask:[B,K] bool
             logits = logits.masked_fill((lane_mask).unsqueeze(1).unsqueeze(1), float('-inf'))
 
-        # agent 屏蔽：给无效 agent 的整行加超大负值（但不是 -inf）
+        # agent 屏蔽：给无效 agent 的整行加超大负值
         if agent_mask is not None:  # agent_mask:[B,N] bool
             invalid_agents = (agent_mask).unsqueeze(-1).unsqueeze(-1)  # [B,N,1,1]
             logits = logits + invalid_agents.float() * (-1e9)  # [B,N,T,K]
 
         probs = logits.softmax(dim=-1)  # [B,N,T,K]
 
-        # 如果希望在输出的 probs 中直接把无效 agent 的概率置 0（不强制归一）
-        if agent_mask is not None:
-            probs = probs * (~agent_mask).unsqueeze(-1).unsqueeze(-1).float()  # [B,N,T,K]
+        # # 如果希望在输出的 probs 中直接把无效 agent 的概率置 0（不强制归一）
+        # if agent_mask is not None:
+        #     probs = probs * (~agent_mask).unsqueeze(-1).unsqueeze(-1).float()  # [B,N,T,K]
         return logits, probs
 
