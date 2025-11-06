@@ -113,22 +113,10 @@ class LightningTrainer(pl.LightningModule):
         target_lane = data["agent"]['agent_lane_id_target']
         agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps-1]
 
-        cand_mask = data['agent']['cand_mask'][:, :, self.history_steps:]
-
+        lane_cand_valid = data['agent']['lane_cand_valid'][:, :, self.history_steps:]
+        lane_cand_mask = ~lane_cand_valid
+        target_lane_logits = target_lane_logits.masked_fill(lane_cand_mask, -1e6)
         B, N, T, K = target_lane_logits.shape
-        # 下面的操作是重复的，所以注释掉了
-        # agent_mask = ~(agent_mask.any(-1))
-        # polygon_mask = data["map"]["valid_mask"]
-        # map_key_padding = polygon_mask.any(-1)
-        # candidate_lane_padding = data['map']['candidate_lane_mask']
-        # lane_mask = ~torch.logical_and(map_key_padding, candidate_lane_padding)
-        #
-        # # lane_mask -> large negative logits so masked lanes are ignored by softmax
-        # if lane_mask is not None:
-        #     target_lane_logits = target_lane_logits.masked_fill(
-        #         lane_mask.unsqueeze(1).unsqueeze(1),
-        #         float('-1e9'),
-        #     )
 
         loss = F.cross_entropy(
             target_lane_logits.view(-1, K),
@@ -138,8 +126,8 @@ class LightningTrainer(pl.LightningModule):
         ).view(B, N, T)
 
         valid = torch.ones_like(loss, dtype=torch.float, device=loss.device)
-        if agent_mask is not None:
-            valid = valid * (~agent_mask).float().unsqueeze(-1)
+        # if agent_mask is not None:
+        #     valid = valid * (~agent_mask).float().unsqueeze(-1)
 
         loss = (loss * valid).sum() / (valid.sum().clamp_min(1.0))
         return {
@@ -439,8 +427,32 @@ class LightningTrainer(pl.LightningModule):
         )
 
         return [optimizer], [scheduler]
+
     def on_after_backward(self):
+        grads = [
+            param.grad.detach()
+            for param in self.parameters()
+            if param.grad is not None
+        ]
+        if grads:
+            total_norm = torch.linalg.vector_norm(
+                torch.stack([g.norm(2) for g in grads]), ord=2
+            )
+            self.log(
+                "grad_norm_l2",
+                total_norm,
+                on_step=True,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+
         if self.trainer.is_global_zero:
-            unused = [n for n,p in self.named_parameters() if p.requires_grad and p.grad is None]
+            unused = [
+                name
+                for name, param in self.named_parameters()
+                if param.requires_grad and param.grad is None
+            ]
             if unused:
                 self.print("[unused this step]:\n" + "\n".join(unused))
