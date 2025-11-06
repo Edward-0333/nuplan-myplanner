@@ -22,6 +22,8 @@ from .modules.static_objects_encoder import StaticObjectsEncoder
 from .modules.planning_decoder import PlanningDecoder
 from .layers.mlp_layer import MLPLayer
 from .layers.linear_scorer_layer import LinearScorerLayer
+from .layers.trajectory_decoder import TrajectoryDecoder
+from .layers.common_layers import build_mlp
 
 
 trajectory_sampling = TrajectorySampling(num_poses=8, time_horizon=8, interval_length=1)
@@ -47,6 +49,7 @@ class PlanningModel(TorchModuleWrapper):
         state_dropout=0.75,
         use_hidden_proj=False,
         cat_x=False,
+        use_agent_lane_temporal_matching = False,
         ref_free_traj=False,
         feature_builder: TTFeatureBuilder = TTFeatureBuilder(),
     ) -> None:
@@ -63,7 +66,7 @@ class PlanningModel(TorchModuleWrapper):
         self.num_modes = num_modes
         self.radius = feature_builder.radius
         self.ref_free_traj = ref_free_traj
-
+        self.use_agent_lane_temporal_matching = use_agent_lane_temporal_matching
         self.location_emb = FourierEmbedding(4, dim, 64)
         # self.static_emb = FourierEmbedding(3, dim, 64)
         # self.polygon_center_emb = FourierEmbedding(3, dim, 64)
@@ -86,17 +89,19 @@ class PlanningModel(TorchModuleWrapper):
 
         self.static_objects_encoder = StaticObjectsEncoder(dim=dim)
 
-        # self.agent_encoder_blocks = nn.ModuleList(
-        #     TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
-        #     for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
-        # )
-
         self.feature_fusion_blocks = nn.ModuleList(
             TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
             for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
         )
-
-        self.linear_scorer_layer = LinearScorerLayer(T=80, d=256)
+        self.agent_predictor = build_mlp(dim, [dim * 2, future_steps * 2], norm="ln")
+        self.trajectory_decoder = TrajectoryDecoder(
+            embed_dim=dim,
+            num_modes=num_modes,
+            future_steps=future_steps,
+            out_channels=4,
+        )
+        if self.use_agent_lane_temporal_matching:
+            self.linear_scorer_layer = LinearScorerLayer(T=80, d=256)
         self.norm1 = nn.LayerNorm(dim)
 
     def _init_weights(self, m):
@@ -148,23 +153,33 @@ class PlanningModel(TorchModuleWrapper):
         for blk in self.feature_fusion_blocks:
             new_x, _ = blk(new_x, new_x, key_padding_mask=new_mask, return_attn_weights=False)
         new_x = self.norm1(new_x)
-        x_agent_out = new_x[:, :A, :]
-        x_polygon_out = new_x[:, A + x_static.shape[1]:, :]
 
-        map_key_padding = polygon_mask.any(-1)
-        candidate_lane_mask= data['map']['candidate_lane_mask']
-        map_key_padding = ~torch.logical_and(map_key_padding, candidate_lane_mask)
+        trajectory, probability = self.trajectory_decoder(new_x[:, 0])
+        prediction = self.agent_predictor(new_x[:, 1:A]).view(bs, -1, self.future_steps, 2)
 
-        logits, probs = self.linear_scorer_layer(
-            x_agent_out,
-            x_polygon_out,
-            agent_mask=agent_key_padding,
-            lane_mask=map_key_padding,
-        )
+        if self.use_agent_lane_temporal_matching:
+            x_agent_out = new_x[:, :A, :]
+            x_polygon_out = new_x[:, A + x_static.shape[1]:, :]
+
+            map_key_padding = polygon_mask.any(-1)
+            candidate_lane_mask = data['map']['candidate_lane_mask']
+            map_key_padding = ~torch.logical_and(map_key_padding, candidate_lane_mask)
+            logits, probs = self.linear_scorer_layer(
+                x_agent_out,
+                x_polygon_out,
+                agent_mask=agent_key_padding,
+                lane_mask=map_key_padding,
+            )
+        else:
+            probs = None
+            logits = None
 
         out = {
             "target_lane_logits": logits,
             "target_lane_probs": probs,
+            "trajectory": trajectory,
+            "probability": probability,
+            "prediction": prediction,
         }
 
         return out
