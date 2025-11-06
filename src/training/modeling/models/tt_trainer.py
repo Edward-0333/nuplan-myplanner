@@ -73,13 +73,13 @@ class LightningTrainer(pl.LightningModule):
 
     def on_fit_start(self) -> None:
         metrics_collection = MetricCollection(
-            [
-                minADE().to(self.device),
-                minFDE().to(self.device),
-                MR(miss_threshold=2).to(self.device),
-                PredAvgADE().to(self.device),
-                PredAvgFDE().to(self.device),
-            ]
+            {
+                "minADE1": minADE(k=1).to(self.device),
+                "minADE6": minADE(k=6).to(self.device),
+                "minFDE1": minFDE(k=1).to(self.device),
+                "minFDE6": minFDE(k=6).to(self.device),
+                "MR": MR().to(self.device),
+            }
         )
         self.metrics = {
             "train": metrics_collection.clone(prefix="train/"),
@@ -102,37 +102,75 @@ class LightningTrainer(pl.LightningModule):
         res = self.forward(features["feature"].data)
 
         losses = self._compute_objectives(res, features["feature"].data)
-        # metrics = self._compute_metrics(res, features["feature"].data, prefix)
-        self._log_step(losses["loss"], losses, None, prefix)
+        metrics = self._compute_metrics(res, features["feature"].data, prefix)
+        self._log_step(losses["loss"], losses, metrics, prefix)
 
         return losses["loss"] if self.training else 0.0
 
     def _compute_objectives(self, res, data) -> Dict[str, torch.Tensor]:
-        ignore_index = -100
-        target_lane_logits = res["target_lane_logits"]
-        target_lane = data["agent"]['agent_lane_id_target']
-        agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps-1]
 
-        lane_cand_valid = data['agent']['lane_cand_valid'][:, :, self.history_steps:]
-        lane_cand_mask = ~lane_cand_valid
-        target_lane_logits = target_lane_logits.masked_fill(lane_cand_mask, -1e6)
-        B, N, T, K = target_lane_logits.shape
+        trajectory, probability, prediction,target_lane_logits,target_lane_probs = (
+            res["trajectory"],
+            res["probability"],
+            res["prediction"],
+            res["target_lane_logits"],
+            res["target_lane_probs"]
+        )
+        targets = data["agent"]["target"]
+        valid_mask = data["agent"]["valid_mask"][:, :, -trajectory.shape[-2] :]
+        ego_target_pos, ego_target_heading = targets[:, 0, :, :2], targets[:, 0, :, 2]
 
-        loss = F.cross_entropy(
-            target_lane_logits.view(-1, K),
-            target_lane.view(-1),
-            reduction='none',
-            ignore_index=ignore_index
-        ).view(B, N, T)
+        ego_target = torch.cat(
+            [
+                ego_target_pos,
+                torch.stack(
+                    [ego_target_heading.cos(), ego_target_heading.sin()], dim=-1
+                ),
+            ],
+            dim=-1,
+        )
+        agent_target, agent_mask = targets[:, 1:], valid_mask[:, 1:]
+        ade = torch.norm(trajectory[..., :2] - ego_target[:, None, :, :2], dim=-1)
+        best_mode = torch.argmin(ade.sum(-1), dim=-1)
+        best_traj = trajectory[torch.arange(trajectory.shape[0]), best_mode]
+        ego_reg_loss = F.smooth_l1_loss(best_traj, ego_target)
+        ego_cls_loss = F.cross_entropy(probability, best_mode.detach())
+        agent_reg_loss = F.smooth_l1_loss(
+            prediction[agent_mask], agent_target[agent_mask][:, :2]
+        )
+        if target_lane_logits is None or target_lane_probs is None:
 
-        valid = torch.ones_like(loss, dtype=torch.float, device=loss.device)
-        # if agent_mask is not None:
-        #     valid = valid * (~agent_mask).float().unsqueeze(-1)
+            loss = ego_reg_loss + ego_cls_loss + agent_reg_loss
+            return {
+                "loss": loss,
+                "reg_loss": ego_reg_loss,
+                "cls_loss": ego_cls_loss,
+                "prediction_loss": agent_reg_loss,
+            }
+        else:
+            ignore_index = -100
+            target_lane_logits = res["target_lane_logits"]
+            target_lane = data["agent"]['agent_lane_id_target']
+            agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps-1]
 
-        loss = (loss * valid).sum() / (valid.sum().clamp_min(1.0))
-        return {
-            "loss": loss,
-        }
+            lane_cand_valid = data['agent']['lane_cand_valid'][:, :, self.history_steps:]
+            lane_cand_mask = ~lane_cand_valid
+            target_lane_logits = target_lane_logits.masked_fill(lane_cand_mask, -1e6)
+            B, N, T, K = target_lane_logits.shape
+
+            loss = F.cross_entropy(
+                target_lane_logits.view(-1, K),
+                target_lane.view(-1),
+                reduction='none',
+                ignore_index=ignore_index
+            ).view(B, N, T)
+
+            valid = torch.ones_like(loss, dtype=torch.float, device=loss.device)
+
+            loss = (loss * valid).sum() / (valid.sum().clamp_min(1.0))
+            return {
+                "loss": loss,
+            }
 
     def get_prediction_loss(self, data, prediction, valid_mask, target):
         """
@@ -227,35 +265,9 @@ class LightningTrainer(pl.LightningModule):
         )
         return triplet_contrastive_loss
 
-    def _compute_metrics(self, res, data, prefix) -> Dict[str, torch.Tensor]:
-        """
-        Computes a set of planning metrics given the model's predictions and targets.
+    def _compute_metrics(self, output, data, prefix) -> Dict[str, torch.Tensor]:
+        metrics = self.metrics[prefix](output, data["agent"]["target"][:, 0])
 
-        :param predictions: model's predictions
-        :param targets: ground truth targets
-        :return: dictionary of metrics names and values
-        """
-        # get top 6 modes
-        trajectory, probability = res["trajectory"], res["probability"]
-        r_padding_mask = ~data["reference_line"]["valid_mask"].any(-1)
-        probability.masked_fill_(r_padding_mask.unsqueeze(-1), -1e6)
-
-        bs, R, M, T, _ = trajectory.shape
-        trajectory = trajectory.reshape(bs, R * M, T, -1)
-        probability = probability.reshape(bs, R * M)
-        top_k_prob, top_k_index = probability.topk(6, dim=-1)
-        top_k_traj = trajectory[torch.arange(bs)[:, None], top_k_index]
-
-        outputs = {
-            "trajectory": top_k_traj[..., :2],
-            "probability": top_k_prob,
-            "prediction": res["prediction"][..., :2],
-            "prediction_target": data["agent"]["target"][:, 1:],
-            "valid_mask": data["agent"]["valid_mask"][:, 1:, self.history_steps :],
-        }
-        target = data["agent"]["target"][:, 0]
-
-        metrics = self.metrics[prefix](outputs, target)
         return metrics
 
     def _log_step(
@@ -429,6 +441,15 @@ class LightningTrainer(pl.LightningModule):
         return [optimizer], [scheduler]
 
     def on_after_backward(self):
+        # 查找未使用的参数
+        unused = []
+        for n, p in self.named_parameters():
+            # 只关心需要训练的参数
+            if p.requires_grad and p.grad is None:
+                unused.append(n)
+        if unused:
+            self.print(f"[UNUSED PARAMS] {unused[:10]}{' ...' if len(unused) > 10 else ''}")
+        # 计算并记录梯度范数
         grads = [
             param.grad.detach()
             for param in self.parameters()
