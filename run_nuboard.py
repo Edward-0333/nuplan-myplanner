@@ -13,9 +13,11 @@ from nuplan.planning.script.builders.scenario_building_builder import build_scen
 from nuplan.planning.script.builders.utils.utils_config import update_config_for_nuboard
 from nuplan.planning.script.utils import set_default_path
 
-os.environ['NUPLAN_MAPS_ROOT']="/home/robosense/LK/nuplan/nuplan-devkit/nuplan/dataset/maps"
-os.environ['NUPLAN_DATA_ROOT']="/home/robosense/LK/nuplan/nuplan-devkit/nuplan/dataset"
-os.environ['NUPLAN_EXP_ROOT']="/home/robosense/LK/nuplan/nuplan-devkit/nuplan/exp"
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+os.environ['NUPLAN_MAPS_ROOT']=f"{parent_dir}/nuplan-devkit/nuplan/dataset/maps"
+os.environ['NUPLAN_DATA_ROOT']=f"{parent_dir}/nuplan-devkit/nuplan/dataset"
+os.environ['NUPLAN_EXP_ROOT']=f"{parent_dir}/nuplan-devkit/nuplan/exp"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
