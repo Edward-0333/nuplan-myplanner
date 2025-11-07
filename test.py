@@ -1,22 +1,20 @@
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence
 
-# 输入的维度
-embed_dim = 256  # 每个 token 的嵌入维度
-num_heads = 8  # 多头的数量
-batch_size = 32  # 批量大小
-seq_len = 10  # 序列长度
+A = torch.randn(1, 5, 3)
+B = torch.randn(8, 5, 2)
 
-# 创建 MultiheadAttention 层
-multihead_attn = nn.MultiheadAttention(embed_dim, num_heads)
+# 目标特征维度
+max_feat = max(A.shape[-1], B.shape[-1])
 
-# 输入查询（query）、键（key）和值（value）
-query = torch.rand(seq_len, batch_size, embed_dim)  # 形状 (seq_len, batch_size, embed_dim)
-key = torch.rand(seq_len, batch_size, embed_dim)  # 形状 (seq_len, batch_size, embed_dim)
-value = torch.rand(seq_len, batch_size, embed_dim)  # 形状 (seq_len, batch_size, embed_dim)
+def pad_last_dim(x, target_dim):
+    diff = target_dim - x.shape[-1]
+    if diff > 0:
+        # pad 格式是 (最后一维前, 最后一维后, 倒数第二维前, 倒数第二维后, ...)
+        x = F.pad(x, (0, diff), mode='constant', value=0)
+    return x
 
-# 使用 MultiheadAttention
-attn_output, attn_output_weights = multihead_attn(query, key, value)
-
-print("Attention Output Shape:", attn_output.shape)  # (seq_len, batch_size, embed_dim)
-print("Attention Weights Shape:", attn_output_weights.shape)  # (batch_size, num_heads, seq_len, seq_len)
+A_padded = pad_last_dim(A, max_feat)
+B_padded = pad_last_dim(B, max_feat)
+print(A_padded.shape, B_padded.shape)

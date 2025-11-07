@@ -39,8 +39,9 @@ def plot_scenarios(data,scenario_name):
     polygon_on_route = map_data['polygon_on_route']  # (N,)
     polygon_road_block_id = map_data['polygon_road_block_id']  # (N,)
     polygon_road_block_id_set = set(polygon_road_block_id)
-    cand_mask = data['agent']['cand_mask']
-    # dict_all_lane_id = data['agent']['dict_all_lane_id']
+    cand_mask = data['agent']['lane_cand_valid']
+    all_lane_id = data['map']['polygon_road_lane_id']
+    dict_all_lane_id = {int(lid): idx for idx, lid in enumerate(all_lane_id) if int(lid) > 0}
     # 设置一个列表，存储每个road_block_id对应的颜色
     road_block_id_color = {}
     for road_block_id in polygon_road_block_id_set:
@@ -54,7 +55,7 @@ def plot_scenarios(data,scenario_name):
     #     for lane_idx, lane_id in enumerate(polygon_on_route_id):
     #         if lane_idx < flattened_target.size:
     #             lane_id_to_target_weight[lane_id] = flattened_target[lane_idx]
-    agent = 2
+    agent = 0
     for t in range(101):
         fig, ax = plt.subplots(figsize=(50, 50))
         now_lane = data['agent']['lane_id'][agent][t]
@@ -66,9 +67,9 @@ def plot_scenarios(data,scenario_name):
             road_lane_id = map_data['polygon_road_lane_id'][i]
             if road_lane_id == 0:
                 cand_lane = False
-            # else:
-                # lane_idx = dict_all_lane_id[road_lane_id]
-                # cand_lane = cand_mask[agent,t,lane_idx]
+            else:
+                lane_idx = dict_all_lane_id[road_lane_id]
+                cand_lane = cand_mask[agent,t,lane_idx]
             polygon_points = np.vstack([positions[i,1,:,:], positions[i,2,:,:][::-1]])
             ax.plot(positions[i,0,:,0], positions[i,0,:,1], label='Ego',linestyle='dashed',color='grey')
 
@@ -226,7 +227,8 @@ def main(cfg: DictConfig):
     j = 0
     for file_name in file_names:
         # file_token = file_name.split('/')[-2]
-        # if not file_token=="b2a5c363d1dd5abe":
+        # print(file_token)
+        # if not file_token=="7aa620b613825b60":
         #     continue
         # if j <=6:
         #     j += 1
