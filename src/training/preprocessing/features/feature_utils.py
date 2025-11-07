@@ -13,7 +13,7 @@ def find_candidate_lanes(data: dict, map_api, hist_steps):
     dict_all_lane_id = {int(lid): idx for idx, lid in enumerate(all_lane_id) if int(lid) > 0}
     target_roadblock_id = data['agent']['roadblock_id']#[:,hist_steps:]
     target_lane_id = data['agent']['lane_id']#[:,hist_steps:]
-    assert len(dict_all_lane_id.keys())< K, f"too many lanes in the scene! > {K}"
+    assert len(dict_all_lane_id.keys())<= K, f"too many lanes in the scene! > {K}"
     for i in range(N):
         for t in range(T):
             if target_roadblock_id[i][t] == 0:
