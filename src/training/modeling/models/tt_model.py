@@ -182,4 +182,11 @@ class PlanningModel(TorchModuleWrapper):
             "prediction": prediction,
         }
 
+        if not self.training:
+            best_mode = probability.argmax(dim=-1)
+            output_trajectory = trajectory[torch.arange(bs), best_mode]
+            angle = torch.atan2(output_trajectory[..., 3], output_trajectory[..., 2])
+            out["output_trajectory"] = torch.cat(
+                [output_trajectory[..., :2], angle.unsqueeze(-1)], dim=-1
+            )
         return out
