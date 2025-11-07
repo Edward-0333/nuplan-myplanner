@@ -25,16 +25,21 @@ defaults:
       - metric_summary_callback
   - splitter: nuplan
   # Hyperparameters need to be specified
-  - observation:
-  - ego_controller:
-  - planner: ml_planner
+  - observation: null
+  - ego_controller: null
+  - planner: null
   - simulation_time_controller: step_simulation_time_controller
   - metric_aggregator:
       - default_weighted_average
-  - simulation: closed_loop_reactive_agents
+  - simulation: closed_loop_nonreactive_agents
+  - override worker: sequential
+  - override planner: planTT
+
+  - override scenario_builder: nuplan_challenge
   - override hydra/job_logging: none                            # Disable hydra's logging
-  - override hydra/hydra_logging: none                          # Disable hydra's logging
-  - override scenario_filter: val14_benchmark
+  - override hydra/hydra_logging: none
+    # Disable hydra's logging
+  - override scenario_filter: single_right_turn
 
 experiment_name: 'simulation'
 aggregated_metric_folder_name: 'aggregator_metric'         # Aggregated metric folder name
@@ -42,7 +47,7 @@ aggregator_save_path: ${output_dir}/${aggregated_metric_folder_name}
 
 
 # Progress Visualization
-enable_simulation_progress_bar: False # Show for every simulation its progress
+enable_simulation_progress_bar: true # Show for every simulation its progress
 
 # Simulation Setup
 simulation_history_buffer_duration: 2.0  # [s] The look back duration to initialize the simulation history buffer with
@@ -51,7 +56,7 @@ simulation_history_buffer_duration: 2.0  # [s] The look back duration to initial
 # This number can also be < 1 because we allow multiple models to be loaded into a single GPU.
 # In case this number is 0 or null, no GPU is used for simulation and all cpu cores are leveraged
 # Note, that the user have to make sure that if a number < 1 is chosen, the model will fit 1 / num_gpus into GPU memory
-number_of_gpus_allocated_per_simulation: 0
+number_of_gpus_allocated_per_simulation: 1
 
 # This number specifies number of CPU threads that are used for simulation
 # In case this is null, then each simulation will use unlimited resources.

@@ -35,7 +35,7 @@ defaults:
 
   - training: train_tt
   - override scenario_builder: nuplan_mini
-  - override worker: ray_distributed
+  - override worker: ray_distributed  #sequential, ray_distributed
   - override training_metric:
         - avg_displacement_error
         - avg_heading_error

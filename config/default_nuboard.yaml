@@ -10,13 +10,13 @@ hydra:
 defaults:
   - default_common
   - simulation_metric:
-      - simulation_closed_loop_nonreactive_agents
+      - default_metrics
   - override hydra/job_logging: none                            # Disable hydra's logging
   - override hydra/hydra_logging: none                          # Disable hydra's logging
 
 log_config: False                                  # Whether to log the final config after all overrides and interpolations
 port_number: 5006
-simulation_path: /home/robosense/LK/nuplan/nuplan-devkit/nuplan/exp/exp/simulation/closed_loop_reactive_agents/2025.08.12.11.14.49
+simulation_path: /home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp/exp/simulation/closed_loop_nonreactive_agents/2025.11.07.10.00.44
 resource_prefix: null
 profiler_path: null
 async_scenario_rendering: True                     # Setting this to True will improve UX by showing the scenario canvas as early as possible and then drawing individual plots as their data become available
