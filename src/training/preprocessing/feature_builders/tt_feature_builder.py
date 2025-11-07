@@ -161,8 +161,21 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
     def get_features_from_simulation(
         self, current_input: PlannerInput, initialization: PlannerInitialization
     ) -> AbstractModelFeature:
+        history = current_input.history
+        tracked_objects_list = [
+            observation.tracked_objects for observation in history.observations
+        ]
+        horizon = self.history_samples + 1
+        return self._build_feature(
+            present_idx=-1,
+            ego_state_list=history.ego_states[-horizon:],
+            tracked_objects_list=tracked_objects_list[-horizon:],
+            route_roadblocks_ids=initialization.route_roadblock_ids,
+            map_api=initialization.map_api,
+            mission_goal=initialization.mission_goal,
+            traffic_light_status=current_input.traffic_light_data,
+        )
 
-        return 1
 
     def _build_feature(
         self,
