@@ -19,6 +19,7 @@ from nuplan.planning.simulation.observation.idm.utils import (
     create_path_from_se2,
     path_to_linestring,
 )
+from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.planning.simulation.path.utils import trim_path
 from shapely.geometry import Point
 
@@ -107,7 +108,71 @@ class RouteManager:
         return centerline_discrete_path
 
     def get_now_lane(self, ego_state: EgoState) -> Optional[LaneGraphEdgeMapObject]:
-        return self._get_starting_lane(ego_state)
+        now_lane: LaneGraphEdgeMapObject = None
+        if isinstance(ego_state, EgoState):
+
+            ego_position_array: npt.NDArray[np.float64] = ego_state.rear_axle.array
+            ego_rear_axle_point: Point = Point(*ego_position_array)
+            ego_heading: float = ego_state.rear_axle.heading
+        else:
+            ego_position_array: npt.NDArray[np.float64] = np.array(
+                [ ego_state.center.x,  ego_state.center.y], dtype=np.float64
+            )
+            ego_rear_axle_point: Point = Point(*ego_position_array)
+            ego_heading: float = ego_state.center.heading
+
+        intersecting_lanes = self._drivable_area_map.intersects(ego_rear_axle_point)
+        # layers = [SemanticMapLayer.LANE, SemanticMapLayer.LANE_CONNECTOR]
+        candidates_lanes = []
+        candidates_heading_errors = []
+        lane_type = None
+        for lane_id in intersecting_lanes:
+            lane_object = self._map_api.get_map_object(lane_id, SemanticMapLayer.LANE)
+
+            lane_type = 'lane' if lane_object is not None else 'lane_connector'
+            lane_object = lane_object or self._map_api.get_map_object(
+                lane_id, SemanticMapLayer.LANE_CONNECTOR
+            )
+            if lane_object is None:
+                lane_car_park = self._map_api.get_map_object(lane_id, SemanticMapLayer.CARPARK_AREA)
+                assert lane_car_park is not None, '出问题了，map object should exist'
+                lane_type = 'car_park'
+                return lane_car_park, lane_type
+            lane_discrete_path: List[StateSE2] = (
+                lane_object.baseline_path.discrete_path
+            )
+            lane_state_se2_array = np.array(
+                [state.array for state in lane_discrete_path], dtype=np.float64
+            )
+            # calculate nearest state on baseline
+            lane_distances = (
+                                     ego_position_array[None, ...] - lane_state_se2_array
+                             ) ** 2
+            lane_distances = lane_distances.sum(axis=-1) ** 0.5
+
+            # calculate heading error
+            heading_error = (
+                    lane_discrete_path[np.argmin(lane_distances)].heading - ego_heading
+            )
+            heading_error = np.abs(normalize_angle(heading_error))
+
+            # add lane to candidates
+            candidates_lanes.append(lane_object)
+            candidates_heading_errors.append(heading_error)
+        # if len(candidates_heading_errors) == 0 and (
+        #         ego_state.tracked_object_type != TrackedObjectType.PEDESTRIAN
+        #         and ego_state.tracked_object_type != TrackedObjectType.BICYCLE):
+        #     print(1)
+        # if len(candidates_heading_errors) == 0 and (
+        #     ego_state.tracked_object_type == TrackedObjectType.PEDESTRIAN
+        #      or ego_state.tracked_object_type == TrackedObjectType.BICYCLE):
+        #     return '', ''
+        if len(intersecting_lanes)==0:
+            return None, None
+        now_lane = candidates_lanes[np.argmin(np.abs(candidates_heading_errors))]
+
+        lane_in_route = now_lane.id in self._route_lane_dict.keys()
+        return now_lane, lane_type
 
     def get_reference_lines(self, ego_state: EgoState, interval=1.0, length=100):
         discrete_paths = []
@@ -247,7 +312,7 @@ class RouteManager:
         :return: lane object (on-route)
         """
         starting_lane: LaneGraphEdgeMapObject = None
-        on_route_lanes, heading_error = self._get_intersecting_lanes(ego_state)
+        on_route_lanes, heading_error = self._get_intersecting_lanes_in_routes(ego_state)
 
         if on_route_lanes:
             # 1. Option: find lanes from lane occupancy-map
@@ -272,7 +337,7 @@ class RouteManager:
 
         return starting_lane
 
-    def _get_intersecting_lanes(
+    def _get_intersecting_lanes_in_routes(
         self, ego_state: EgoState
     ) -> Tuple[List[LaneGraphEdgeMapObject], List[float]]:
         """

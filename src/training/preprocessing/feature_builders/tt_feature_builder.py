@@ -196,7 +196,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 map_api,
                 present_ego_state,
                 route_roadblocks_ids,
-                radius=50,
+                radius=self.radius,
             )
             scenario_manager.update_ego_state(present_ego_state)
             scenario_manager.update_drivable_area_map()
@@ -423,7 +423,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             self.interested_objects_types.index(TrackedObjectType.EGO), dtype=np.int8
         )
 
-        ego_lanes, ego_blocks = scenario_manager.get_car_lane_id_optimize(ego_states)
+        ego_lanes, ego_blocks, _ = scenario_manager.get_car_lane_id_optimize(ego_states)
+
         ego_lanes = np.array([int(lane) for lane in ego_lanes])
         ego_blocks = np.array([int(block) for block in ego_blocks])
         return {
@@ -508,17 +509,17 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 # 如果如果需要限制在route roadblock内，则打开下面的注释
                 # if not now_in_route[agent.track_token]["in_route_block"]:
                 #     continue
-                car_lane, car_block = scenario_manager.get_car_lane_id_optimize(agent)
+                car_lane, car_block, lane_types = scenario_manager.get_car_lane_id_optimize(agent)
                 # if agent.tracked_object_type == self.interested_objects_types[2]:
                 #     agent_block = ''
                 # else:
                 #     agent_block = get_current_roadblock(agent, map_api, route_roadblock_dict)[0]
 
-                if car_block[0] != '':  # 因为有些车辆会超过地图所考虑的范围，超过范围的车辆不进行考虑
-                    if int(car_block[0]) not in all_consider_block:
-                        continue
-                elif car_block[0] == '':
-                    continue
+                # if car_block[0] != '':  # 因为有些车辆会超过地图所考虑的范围，超过范围的车辆不进行考虑
+                #     if int(car_block[0]) not in all_consider_block:
+                #         continue
+                # elif car_block[0] == '':
+                #     continue
                 whether_in_route_block = int(car_block[0]) in route_block_ids
 
                 idx = agent_ids_dict[agent.track_token]

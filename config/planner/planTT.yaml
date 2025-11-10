@@ -36,4 +36,4 @@ imitation_planner:
       max_agents: 48
       build_reference_line: true
 
-  planner_ckpt: /home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp/exp/training/tt/2025.11.06.14.26.26/checkpoints/last.ckpt
+  planner_ckpt: /home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp/exp/training/tt/2025.11.08.08.57.04/checkpoints/epoch=4-val_minFDE=0.000.ckpt

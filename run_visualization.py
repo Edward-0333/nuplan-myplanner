@@ -237,8 +237,8 @@ def main(cfg: DictConfig):
         feature = storing_mechanism.load_computed_feature_from_folder(pathlib.Path(file_name), feature_builders.get_feature_type())
         plot_scenarios(feature.data,scenario_name)
         j += 1
-        if j == 20:
-            break
+        # if j == 10:
+        #     break
 
 
 if __name__ == '__main__':
