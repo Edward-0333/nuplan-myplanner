@@ -27,6 +27,18 @@ os.environ['NUPLAN_DATA_ROOT']="/home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/da
 os.environ['NUPLAN_EXP_ROOT']="/home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp"
 
 def plot_scenarios(data,scenario_name):
+    lane_cand_valid = data['agent']['lane_cand_valid'][:,21:]
+    agent_lane_id_target = data['agent']['agent_lane_id_target']
+    print(1)
+    for i in range(lane_cand_valid.shape[0]):
+        for j in range(lane_cand_valid.shape[1]):
+            target_lane = agent_lane_id_target[i][j]
+            if target_lane == -100:
+                continue
+            if not lane_cand_valid[i][j][target_lane]:
+
+                print(1)
+    return 0
     # 创建文件夹
     # '/home/vci-4/LK/lk_nuplan/my_planner/scenario_pngs'
     save_path = f'/home/vci-4/LK/lk_nuplan/my_planner/scenario_pngs/{scenario_name[0]}/{scenario_name[1]}/{scenario_name[2]}'

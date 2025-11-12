@@ -93,13 +93,6 @@ class PlanningModel(TorchModuleWrapper):
             TransformerEncoderLayer(dim=dim, num_heads=num_heads, drop_path=dp)
             for dp in [x.item() for x in torch.linspace(0, drop_path, encoder_depth)]
         )
-        self.agent_predictor = build_mlp(dim, [dim * 2, future_steps * 2], norm="ln")
-        self.trajectory_decoder = TrajectoryDecoder(
-            embed_dim=dim,
-            num_modes=num_modes,
-            future_steps=future_steps,
-            out_channels=4,
-        )
         if self.use_agent_lane_temporal_matching:
             self.linear_scorer_layer = LinearScorerLayer(T=80, d=256)
         self.norm1 = nn.LayerNorm(dim)
@@ -122,7 +115,8 @@ class PlanningModel(TorchModuleWrapper):
         agent_pos = data["agent"]["position"][:, :, self.history_steps - 1]
         agent_vel = data["agent"]["velocity"][:, :, self.history_steps - 1]
         agent_heading = data["agent"]["heading"][:, :, self.history_steps - 1]
-        agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps]
+        history_agent_valid = data["agent"]["valid_mask"][:, :, : self.history_steps]
+        feature_agent_valid = data["agent"]["valid_mask"][:, :, self.history_steps:]
         polygon_center = data["map"]["polygon_center"]
         polygon_mask = data["map"]["valid_mask"]
 
@@ -144,49 +138,34 @@ class PlanningModel(TorchModuleWrapper):
         x_polygon = self.map_encoder(data)
         x = torch.cat([x_agent, x_polygon, x_static], dim=1)
 
-        agent_key_padding = ~(agent_mask.any(-1))
+        history_agent_key_padding = ~(history_agent_valid.any(-1))
         map_key_padding = ~(polygon_mask.any(-1))
         new_x = x + location_embed
 
-        new_mask = torch.cat([agent_key_padding, static_key_padding, map_key_padding], dim=1)
+        new_mask = torch.cat([history_agent_key_padding, static_key_padding, map_key_padding], dim=1)
 
         for blk in self.feature_fusion_blocks:
             new_x, _ = blk(new_x, new_x, key_padding_mask=new_mask, return_attn_weights=False)
         new_x = self.norm1(new_x)
 
-        trajectory, probability = self.trajectory_decoder(new_x[:, 0])
-        prediction = self.agent_predictor(new_x[:, 1:A]).view(bs, -1, self.future_steps, 2)
+        x_agent_out = new_x[:, :A, :]
+        # x_polygon_out = new_x[:, A + x_static.shape[1]:, :]
 
-        if self.use_agent_lane_temporal_matching:
-            x_agent_out = new_x[:, :A, :]
-            x_polygon_out = new_x[:, A + x_static.shape[1]:, :]
+        map_key_padding = polygon_mask.any(-1)
+        candidate_lane_mask = data['map']['candidate_lane_mask']
+        map_key_padding = ~torch.logical_and(map_key_padding, candidate_lane_mask)
+        feature_agent_key_padding = ~(feature_agent_valid.any(-1))
 
-            map_key_padding = polygon_mask.any(-1)
-            candidate_lane_mask = data['map']['candidate_lane_mask']
-            map_key_padding = ~torch.logical_and(map_key_padding, candidate_lane_mask)
-            logits, probs = self.linear_scorer_layer(
-                x_agent_out,
-                x_polygon_out,
-                agent_mask=agent_key_padding,
-                lane_mask=map_key_padding,
-            )
-        else:
-            probs = None
-            logits = None
+        logits, probs = self.linear_scorer_layer(
+            x_agent_out,
+            x_polygon,
+            agent_mask=feature_agent_key_padding,
+            lane_mask=map_key_padding,
+        )
 
         out = {
             "target_lane_logits": logits,
             "target_lane_probs": probs,
-            "trajectory": trajectory,
-            "probability": probability,
-            "prediction": prediction,
         }
 
-        if not self.training:
-            best_mode = probability.argmax(dim=-1)
-            output_trajectory = trajectory[torch.arange(bs), best_mode]
-            angle = torch.atan2(output_trajectory[..., 3], output_trajectory[..., 2])
-            out["output_trajectory"] = torch.cat(
-                [output_trajectory[..., :2], angle.unsqueeze(-1)], dim=-1
-            )
         return out

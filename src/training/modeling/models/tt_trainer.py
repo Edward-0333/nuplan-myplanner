@@ -102,168 +102,76 @@ class LightningTrainer(pl.LightningModule):
         res = self.forward(features["feature"].data)
 
         losses = self._compute_objectives(res, features["feature"].data)
-        metrics = self._compute_metrics(res, features["feature"].data, prefix)
-        self._log_step(losses["loss"], losses, metrics, prefix)
+        # metrics = self._compute_metrics(res, features["feature"].data, prefix)
+        self._log_step(losses["loss"], losses, None, prefix)
 
         return losses["loss"] if self.training else 0.0
 
     def _compute_objectives(self, res, data) -> Dict[str, torch.Tensor]:
 
-        trajectory, probability, prediction,target_lane_logits,target_lane_probs = (
-            res["trajectory"],
-            res["probability"],
-            res["prediction"],
-            res["target_lane_logits"],
-            res["target_lane_probs"]
-        )
-        targets = data["agent"]["target"]
-        valid_mask = data["agent"]["valid_mask"][:, :, -trajectory.shape[-2] :]
-        ego_target_pos, ego_target_heading = targets[:, 0, :, :2], targets[:, 0, :, 2]
+        ignore_index = -100
+        target_lane_logits = res["target_lane_logits"]
+        target_lane = data["agent"]['agent_lane_id_target']
+        agent_mask = data["agent"]["valid_mask"][:, :,  self.history_steps:]
+        target_lane = target_lane.masked_fill(~agent_mask, ignore_index)
 
-        ego_target = torch.cat(
-            [
-                ego_target_pos,
-                torch.stack(
-                    [ego_target_heading.cos(), ego_target_heading.sin()], dim=-1
-                ),
-            ],
-            dim=-1,
-        )
-        agent_target, agent_mask = targets[:, 1:], valid_mask[:, 1:]
-        ade = torch.norm(trajectory[..., :2] - ego_target[:, None, :, :2], dim=-1)
-        best_mode = torch.argmin(ade.sum(-1), dim=-1)
-        best_traj = trajectory[torch.arange(trajectory.shape[0]), best_mode]
-        ego_reg_loss = F.smooth_l1_loss(best_traj, ego_target)
-        ego_cls_loss = F.cross_entropy(probability, best_mode.detach())
-        agent_reg_loss = F.smooth_l1_loss(
-            prediction[agent_mask], agent_target[agent_mask][:, :2]
-        )
-        if target_lane_logits is None or target_lane_probs is None:
-
-            loss = ego_reg_loss + ego_cls_loss + agent_reg_loss
-            return {
-                "loss": loss,
-                "reg_loss": ego_reg_loss,
-                "cls_loss": ego_cls_loss,
-                "prediction_loss": agent_reg_loss,
-            }
-        else:
-            ignore_index = -100
-            target_lane_logits = res["target_lane_logits"]
-            target_lane = data["agent"]['agent_lane_id_target']
-            agent_mask = data["agent"]["valid_mask"][:, :, : self.history_steps-1]
-
-            lane_cand_valid = data['agent']['lane_cand_valid'][:, :, self.history_steps:]
-            lane_cand_mask = ~lane_cand_valid
-            target_lane_logits = target_lane_logits.masked_fill(lane_cand_mask, -1e6)
-            B, N, T, K = target_lane_logits.shape
-
-            loss = F.cross_entropy(
-                target_lane_logits.view(-1, K),
-                target_lane.view(-1),
-                reduction='none',
-                ignore_index=ignore_index
-            ).view(B, N, T)
-
-            valid = torch.ones_like(loss, dtype=torch.float, device=loss.device)
-
-            loss = (loss * valid).sum() / (valid.sum().clamp_min(1.0))
-            return {
-                "loss": loss,
-            }
-
-    def get_prediction_loss(self, data, prediction, valid_mask, target):
-        """
-        prediction: (bs, A-1, T, 6)
-        valid_mask: (bs, A-1, T)
-        target: (bs, A-1, 6)
-        """
-        prediction_loss = F.smooth_l1_loss(
-            prediction[valid_mask], target[valid_mask], reduction="none"
-        ).sum(-1)
-        prediction_loss = prediction_loss.sum() / valid_mask.sum()
-
-        return prediction_loss
-
-    def get_planning_loss(self, data, trajectory, probability, valid_mask, target, bs):
-        """
-        trajectory: (bs, R, M, T, 4)
-        valid_mask: (bs, T)
-        """
-        num_valid_points = valid_mask.sum(-1)
-        endpoint_index = (num_valid_points / 10).long().clamp_(min=0, max=7)  # max 8s
-        r_padding_mask = ~data["reference_line"]["valid_mask"][:bs].any(-1)  # (bs, R)
-        future_projection = data["reference_line"]["future_projection"][:bs][
-            torch.arange(bs), :, endpoint_index
-        ]
-
-        target_r_index = torch.argmin(
-            future_projection[..., 1] + 1e6 * r_padding_mask, dim=-1
-        )
-        target_m_index = (
-            future_projection[torch.arange(bs), target_r_index, 0] / self.mode_interval
-        ).long()
-        target_m_index.clamp_(min=0, max=self.num_modes - 1)
-
-        target_label = torch.zeros_like(probability)
-        target_label[torch.arange(bs), target_r_index, target_m_index] = 1
-
-        best_trajectory = trajectory[torch.arange(bs), target_r_index, target_m_index]
-
-        if self.use_collision_loss:
-            collision_loss = self.collision_loss(
-                best_trajectory, data["cost_maps"][:bs, :, :, 0].float()
+        test_target_lane = target_lane.clone().cpu().numpy()
+        lane_cand_valid = data['agent']['lane_cand_valid'][:, :, self.history_steps:]
+        lane_cand_mask = ~lane_cand_valid
+        flat_target_lane = target_lane.reshape(-1)
+        valid_target_mask = flat_target_lane != ignore_index
+        if valid_target_mask.any():
+            flat_lane_mask = lane_cand_mask.reshape(-1, lane_cand_mask.shape[-1])
+            valid_targets = flat_target_lane[valid_target_mask]
+            assert valid_targets.min() >= 0 and valid_targets.max() < lane_cand_mask.shape[-1], (
+                "target_lane indices out of range for lane candidates"
             )
-        else:
-            collision_loss = trajectory.new_zeros(1)
+            masked_targets = flat_lane_mask[valid_target_mask].gather(1, valid_targets.unsqueeze(-1)).squeeze(-1)
+            assert not masked_targets.any(), "lane_cand_mask must be False for ground-truth target_lane indices"
 
-        reg_loss = F.smooth_l1_loss(best_trajectory, target, reduction="none").sum(-1)
-        reg_loss = (reg_loss * valid_mask).sum() / valid_mask.sum()
-
-        probability.masked_fill_(r_padding_mask.unsqueeze(-1), -1e6)
-
-        cls_loss = F.cross_entropy(
-            probability.reshape(bs, -1), target_label.reshape(bs, -1).detach()
-        )
-
-        if self.regulate_yaw:
-            heading_vec_norm = torch.norm(best_trajectory[..., 2:4], dim=-1)
-            yaw_regularization_loss = F.l1_loss(
-                heading_vec_norm, heading_vec_norm.new_ones(heading_vec_norm.shape)
+            flat_lane_valid = lane_cand_valid.reshape(-1, lane_cand_valid.shape[-1])
+            valid_target_has_candidate = (
+                flat_lane_valid[valid_target_mask]
+                .gather(1, valid_targets.unsqueeze(-1))
+                .squeeze(-1)
+                .to(torch.bool)
             )
-            reg_loss += yaw_regularization_loss
+            if not valid_target_has_candidate.all():
+                missing = (~valid_target_has_candidate).nonzero(as_tuple=False).view(-1)
+                num_missing = missing.numel()
+                sample_indices = missing[:5].tolist()
+                logger.warning(
+                    "Found %d target_lane entries without valid candidates after collate (example flat indices: %s)",
+                    num_missing,
+                    sample_indices,
+                )
+        B, N, T, K = target_lane_logits.shape
 
-        return reg_loss, cls_loss, collision_loss
+        # lane_cand_mask = lane_cand_mask.contiguous()
+        # agent_mask = agent_mask.contiguous()
+        # test_lane_cand_mask=lane_cand_mask.view(-1, K).cpu().numpy()
+        # test_1 = target_lane_logits.clone().view(-1, K).detach().cpu().numpy()
+        target_lane_logits = target_lane_logits.masked_fill(lane_cand_mask, -1e6)
+        # test_2 = target_lane_logits.clone().view(-1, K).detach().cpu().numpy()
+        # test = target_lane.view(-1).cpu().numpy()
 
-    def _compute_contrastive_loss(
-        self, hidden, valid_mask, normalize=True, tempreture=0.1
-    ):
-        """
-        Compute triplet loss
-
-        Args:
-            hidden: (3*bs, D)
-        """
-        if normalize:
-            hidden = F.normalize(hidden, dim=1, p=2)
-
-        if not valid_mask.any():
-            return hidden.new_zeros(1)
-
-        x_a, x_p, x_n = hidden.chunk(3, dim=0)
-
-        x_a = x_a[valid_mask]
-        x_p = x_p[valid_mask]
-        x_n = x_n[valid_mask]
-
-        logits_ap = (x_a * x_p).sum(dim=1) / tempreture
-        logits_an = (x_a * x_n).sum(dim=1) / tempreture
-        labels = x_a.new_zeros(x_a.size(0)).long()
-
-        triplet_contrastive_loss = F.cross_entropy(
-            torch.stack([logits_ap, logits_an], dim=1), labels
-        )
-        return triplet_contrastive_loss
+        loss = F.cross_entropy(
+            target_lane_logits.view(-1, K),
+            target_lane.view(-1),
+            reduction='none',
+            ignore_index=ignore_index
+        )#.view(B, N, T)
+        # test_target_lane_logits = target_lane_logits.view(-1, K).detach().cpu().numpy()
+        # loss_max = (loss> 1e5).nonzero().cpu().numpy()
+        # loss_max_item = loss_max[0]
+        # test = target_lane.view(-1).cpu().numpy()
+        # test_agent_mask = agent_mask.view(-1).cpu().numpy()
+        # test_lane_cand_mask=lane_cand_mask.view(-1, K).cpu().numpy()
+        valid = torch.ones_like(loss, dtype=torch.float, device=loss.device)
+        loss = (loss * valid).sum() / (valid.sum().clamp_min(1.0))
+        return {
+            "loss": loss,
+        }
 
     def _compute_metrics(self, output, data, prefix) -> Dict[str, torch.Tensor]:
         metrics = self.metrics[prefix](output, data["agent"]["target"][:, 0])

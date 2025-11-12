@@ -292,7 +292,7 @@ class TTFeature(AbstractModelFeature):
             polygon_road_lane_id = data['map']['polygon_road_lane_id']
             candidate_lane_mask = np.zeros(polygon_road_lane_id.shape[0], dtype=bool)
             for lane_id in dict_all_lane_id.keys():
-                lane_idx = list(dict_all_lane_id.keys()).index(lane_id)
+                lane_idx = dict_all_lane_id[lane_id]
                 candidate_lane_mask[lane_idx] = True
             data['map']['candidate_lane_mask'] = candidate_lane_mask
             # 筛选仅在候选车道上的多边形,更新把target_lane換成索引值
@@ -304,15 +304,27 @@ class TTFeature(AbstractModelFeature):
                     lane_id_i = data["agent"]["lane_id"][i][j]
                     # lane_id_i 在dict_all_lane_id中的索引
                     if lane_id_i in dict_all_lane_id:
-                        lane_idx = list(dict_all_lane_id.keys()).index(lane_id_i)
+                        lane_idx = dict_all_lane_id[lane_id_i]
                         agent_lane_id_target[i][j] = lane_idx
                     else:
                         agent_lane_id_target[i][j] = -100
-
+                    # 确保真值target_lane所对应的lane_cand_mask是为False的
                     if data["agent"]["lane_id"][i][j] in valid_lane_id:
                         continue
                     else:
                         data["agent"]["valid_mask"][i][j] = False
+            lane_cand_valid = data["agent"]["lane_cand_valid"]
+            target_lane = agent_lane_id_target
+
+            lane_cand_mask = ~lane_cand_valid
+            flat_target_lane = target_lane.reshape(-1)
+            valid_target_mask = flat_target_lane != -100
+            flat_lane_mask = lane_cand_mask.reshape(-1, lane_cand_mask.shape[-1])
+            ttt = flat_lane_mask[valid_target_mask]
+            valid_targets = flat_target_lane[valid_target_mask]
+            for ii in range(valid_targets.shape[0]):
+                assert not ttt[ii][valid_targets[ii]], "lane_cand_mask must be False for ground-truth target_lane indices"
+
             data['agent']['agent_lane_id_target'] = agent_lane_id_target[:, hist_steps:]
             # 删除data['map']['dict_all_lane_id']
             if "dict_all_lane_id" in data["agent"]:

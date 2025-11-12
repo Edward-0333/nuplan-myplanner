@@ -473,8 +473,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         category = np.zeros((N,), dtype=np.int8)
         valid_mask = np.zeros((N, T), dtype=np.bool_)
         in_route_block = np.zeros((N,T), dtype=np.bool_)
-        lane_id = np.zeros((N, T), dtype=np.int64)
-        block_id = np.zeros((N, T), dtype=np.int64)
+        lane_id = np.full((N, T), -1, dtype=np.int64)
+        block_id = np.full((N, T), -1, dtype=np.int64)
         polygon = [None] * N
 
         if N == 0 or self.disable_agent:
@@ -644,8 +644,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         polygon_tl_status = np.zeros(M, dtype=np.int8)
         polygon_speed_limit = np.zeros(M, dtype=np.float64)
         polygon_has_speed_limit = np.zeros(M, dtype=np.bool_)
-        polygon_road_block_id = np.zeros(M, dtype=np.int32)
-        polygon_road_lane_id = np.zeros(M, dtype=np.int32)
+        polygon_road_block_id = np.full(M, -1, dtype=np.int64)
+        polygon_road_lane_id = np.full(M, -1, dtype=np.int64)
         for lane in lane_objects:
             object_id = int(lane.id)
             idx = object_ids.index(object_id)
