@@ -129,31 +129,16 @@ class LightningTrainer(pl.LightningModule):
             masked_targets = flat_lane_mask[valid_target_mask].gather(1, valid_targets.unsqueeze(-1)).squeeze(-1)
             assert not masked_targets.any(), "lane_cand_mask must be False for ground-truth target_lane indices"
 
-            flat_lane_valid = lane_cand_valid.reshape(-1, lane_cand_valid.shape[-1])
-            valid_target_has_candidate = (
-                flat_lane_valid[valid_target_mask]
-                .gather(1, valid_targets.unsqueeze(-1))
-                .squeeze(-1)
-                .to(torch.bool)
-            )
-            if not valid_target_has_candidate.all():
-                missing = (~valid_target_has_candidate).nonzero(as_tuple=False).view(-1)
-                num_missing = missing.numel()
-                sample_indices = missing[:5].tolist()
-                logger.warning(
-                    "Found %d target_lane entries without valid candidates after collate (example flat indices: %s)",
-                    num_missing,
-                    sample_indices,
-                )
         B, N, T, K = target_lane_logits.shape
 
         # lane_cand_mask = lane_cand_mask.contiguous()
         # agent_mask = agent_mask.contiguous()
         # test_lane_cand_mask=lane_cand_mask.view(-1, K).cpu().numpy()
         # test_1 = target_lane_logits.clone().view(-1, K).detach().cpu().numpy()
-        target_lane_logits = target_lane_logits.masked_fill(lane_cand_mask, -1e6)
-        # test_2 = target_lane_logits.clone().view(-1, K).detach().cpu().numpy()
-        # test = target_lane.view(-1).cpu().numpy()
+        # target_lane_logits = target_lane_logits.masked_fill(lane_cand_mask, -1e6)
+        agent_category = data['agent']['category']  # [B,N]
+        category_mask = ((agent_category == 2) | (agent_category == 3)).unsqueeze(-1)  # [B,N,1]
+        target_lane = target_lane.masked_fill(category_mask, ignore_index)
 
         loss = F.cross_entropy(
             target_lane_logits.view(-1, K),

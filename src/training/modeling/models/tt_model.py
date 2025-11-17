@@ -155,6 +155,9 @@ class PlanningModel(TorchModuleWrapper):
         candidate_lane_mask = data['map']['candidate_lane_mask']
         map_key_padding = ~torch.logical_and(map_key_padding, candidate_lane_mask)
         feature_agent_key_padding = ~(feature_agent_valid.any(-1))
+        agent_category = data['agent']['category']  # [B,N]
+        category_mask = (agent_category == 2) | (agent_category == 3)
+        feature_agent_key_padding = feature_agent_key_padding | category_mask
 
         logits, probs = self.linear_scorer_layer(
             x_agent_out,
