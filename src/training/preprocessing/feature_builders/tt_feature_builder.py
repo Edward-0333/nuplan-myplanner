@@ -84,6 +84,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             SemanticMapLayer.LANE,
             SemanticMapLayer.LANE_CONNECTOR,
             SemanticMapLayer.CROSSWALK,
+            SemanticMapLayer.CARPARK_AREA,
         ]
 
     def get_feature_type(self) -> Type[AbstractModelFeature]:
@@ -188,6 +189,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         traffic_light_status: List[TrafficLightStatusData] = None,
         inference: bool = False,
     ):
+        if present_idx < 0:
+            present_idx = len(ego_state_list) + present_idx
         present_ego_state = ego_state_list[present_idx]
         query_xy = present_ego_state.center
         traffic_light_status = list(traffic_light_status)  # note: tl is a iterator
@@ -613,6 +616,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
                 SemanticMapLayer.LANE,
                 SemanticMapLayer.LANE_CONNECTOR,
                 SemanticMapLayer.CROSSWALK,
+                SemanticMapLayer.CARPARK_AREA,
+
             ],
         )
         lane_objects = (
@@ -621,16 +626,21 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
         )
         crosswalk_objects = map_objects[SemanticMapLayer.CROSSWALK]
 
-        object_ids = [int(obj.id) for obj in lane_objects + crosswalk_objects]
+        carpark_objects = map_objects[SemanticMapLayer.CARPARK_AREA]
+
+        object_ids = [int(obj.id) for obj in lane_objects + crosswalk_objects + carpark_objects]
         object_types = (
             [SemanticMapLayer.LANE] * len(map_objects[SemanticMapLayer.LANE])
             + [SemanticMapLayer.LANE_CONNECTOR]
             * len(map_objects[SemanticMapLayer.LANE_CONNECTOR])
             + [SemanticMapLayer.CROSSWALK]
             * len(map_objects[SemanticMapLayer.CROSSWALK])
+            + [SemanticMapLayer.CARPARK_AREA]
+            * len(map_objects[SemanticMapLayer.CARPARK_AREA])
         )
 
-        M, P = len(lane_objects) + len(crosswalk_objects), sample_points
+
+        M, P = len(lane_objects) + len(crosswalk_objects) + len(carpark_objects), sample_points
         point_position_raw = np.zeros((M, 3, P+1, 2), dtype=np.float64)
         point_position = np.zeros((M, 3, P, 2), dtype=np.float64)
         point_vector = np.zeros((M, 3, P, 2), dtype=np.float64)
@@ -693,7 +703,8 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             )
             polygon_road_block_id[idx] = int(lane.get_roadblock_id())
             polygon_road_lane_id[idx] = int(lane.id)
-        for crosswalk in crosswalk_objects:
+
+        for crosswalk in carpark_objects+crosswalk_objects:
             idx = object_ids.index(int(crosswalk.id))
             edges = self._get_crosswalk_edges(crosswalk)
             point_vector[idx] = edges[:, 1:] - edges[:, :-1]
@@ -716,6 +727,7 @@ class TTFeatureBuilder(AbstractFeatureBuilder):
             polygon_on_route[idx] = False
             polygon_tl_status[idx] = TrafficLightStatusType.UNKNOWN
             polygon_has_speed_limit[idx] = False
+            polygon_road_lane_id[idx] = int(crosswalk.id)
 
         map_features = {
             "point_position": point_position,
