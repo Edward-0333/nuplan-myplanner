@@ -23,7 +23,7 @@ class MapEncoder(nn.Module):
         self.polygon_encoder = PointsEncoder(self.polygon_channel, dim)
         self.speed_limit_emb = FourierEmbedding(1, dim, 64)
 
-        self.type_emb = nn.Embedding(3, dim)
+        self.type_emb = nn.Embedding(4, dim)
         self.on_route_emb = nn.Embedding(2, dim)
         self.traffic_light_emb = nn.Embedding(4, dim)
         self.unknown_speed_emb = nn.Embedding(1, dim)
