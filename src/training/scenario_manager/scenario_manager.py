@@ -292,15 +292,18 @@ class ScenarioManager:
             car_states = [car_states]
         for i, car_state in enumerate(car_states):
             current_lane, lane_type = self._route_manager.get_now_lane(car_state)
-            if lane_type == 'car_park' or current_lane is None:
-                current_block = '-1'
-                current_block_id = '-1'
-                current_lane_id = '-1'
-            else:
-
-                current_block = current_lane.parent
-                current_block_id = current_block.id
+            if lane_type == 'car_park':
                 current_lane_id = current_lane.id
+                current_block_id = '-1'
+            else:
+                if current_lane is None:
+                    current_block_id = '-1'
+                    current_lane_id = '-1'
+                else:
+
+                    current_block = current_lane.parent
+                    current_block_id = current_block.id
+                    current_lane_id = current_lane.id
             current_lanes.append(current_lane_id)
             current_blocks.append(current_block_id)
             lane_types.append(lane_type)

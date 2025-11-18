@@ -140,20 +140,59 @@ class LightningTrainer(pl.LightningModule):
         category_mask = ((agent_category == 2) | (agent_category == 3)).unsqueeze(-1)  # [B,N,1]
         target_lane = target_lane.masked_fill(category_mask, ignore_index)
 
-        loss = F.cross_entropy(
+        loss_ce = F.cross_entropy(
             target_lane_logits.view(-1, K),
             target_lane.view(-1),
             reduction='none',
             ignore_index=ignore_index
-        )#.view(B, N, T)
-        # test_target_lane_logits = target_lane_logits.view(-1, K).detach().cpu().numpy()
-        # loss_max = (loss> 1e5).nonzero().cpu().numpy()
-        # loss_max_item = loss_max[0]
-        # test = target_lane.view(-1).cpu().numpy()
-        # test_agent_mask = agent_mask.view(-1).cpu().numpy()
-        # test_lane_cand_mask=lane_cand_mask.view(-1, K).cpu().numpy()
-        valid = torch.ones_like(loss, dtype=torch.float, device=loss.device)
-        loss = (loss * valid).sum() / (valid.sum().clamp_min(1.0))
+        )
+        valid = torch.ones_like(loss_ce, dtype=torch.float, device=loss_ce.device)
+        loss_ce = (loss_ce * valid).sum() / (valid.sum().clamp_min(1.0))
+
+        # Loss 时间平滑：相邻时刻分布接近（KL 或 L2）
+        # Softmax + clamp 避免出现 0/NaN 概率，后续 KL 更稳定
+        p = F.softmax(target_lane_logits, dim=-1)
+        p = torch.clamp(p, min=1e-8)
+        p = p / p.sum(dim=-1, keepdim=True)
+        logp = p.log()  # [B,N,T,K]
+
+        logp_t = logp[:, :, :-1, :]  # [B,N,T-1,K]
+        logp_tp1 = logp[:, :, 1:, :]  # [B,N,T-1,K]
+        p_t = p[:, :, :-1, :]
+        p_tp1 = p[:, :, 1:, :]
+
+        # KL(p_t || p_{t+1}) 与 KL(p_{t+1} || p_t)
+        kl_fwd = (p_t * (logp_t - logp_tp1)).sum(-1)  # [B,N,T-1]
+        kl_bwd = (p_tp1 * (logp_tp1 - logp_t)).sum(-1)
+        kl_fwd = torch.nan_to_num(kl_fwd, nan=0.0, posinf=0.0, neginf=0.0)
+        kl_bwd = torch.nan_to_num(kl_bwd, nan=0.0, posinf=0.0, neginf=0.0)
+
+        valid_t = agent_mask[:, :, :-1] & agent_mask[:, :, 1:]  # 只有相邻均有效才计算
+        valid_t = valid_t.expand_as(kl_fwd).float()
+        L_smooth = 0.5 * (kl_fwd + kl_bwd)  # [B,N,T-1]
+        L_smooth = (L_smooth * valid_t).sum() / valid_t.sum().clamp_min(1.0)
+
+        # 基于 Lane 邻接关系的“跳变惩罚”（transition cost）
+        p = F.softmax(target_lane_logits, dim=-1)  # [B,N,T,K]
+        p_t = p[:, :, :-1, :]  # [B,N,T-1,K]
+        p_tp1 = p[:, :, 1:, :]  # [B,N,T-1,K]
+        # 先算 M @ p_{t+1}^T
+        # (B,N,T-1,K) @ (B,K,K) -> (B,N,T-1,K)
+        transition_cost = data['map']['polygon_connect_cost_matrix']
+        # 若 batch 内不同样本有 pad，裁/补成与 K 一致
+        if transition_cost.shape[-1] > K:
+            transition_cost = transition_cost[..., :K, :K]
+        elif transition_cost.shape[-1] < K:
+            pad_size = (0, K - transition_cost.shape[-1], 0, K - transition_cost.shape[-2])
+            transition_cost = F.pad(transition_cost, pad_size, value=float('inf'))
+        # einsum 明确批次广播，避免 matmul 对维度对齐敏感
+        Mp_tp1 = torch.einsum('bntk,bkj->bntj', p_tp1, transition_cost.transpose(-1, -2))
+        # p_t^T (Mp_tp1) -> sum_k p_t * (Mp_tp1) along K
+        L_geo_trans = (p_t * Mp_tp1).sum(-1)  # [B,N,T-1]
+
+        L_geo_trans = (L_geo_trans * valid_t).sum() / valid_t.sum().clamp_min(1.0)
+
+        loss = loss_ce + 0.2* L_smooth + 0.2 * L_geo_trans
         return {
             "loss": loss,
         }

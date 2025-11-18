@@ -29,15 +29,15 @@ os.environ['NUPLAN_EXP_ROOT']="/home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp
 def plot_scenarios(data,scenario_name):
     lane_cand_valid = data['agent']['lane_cand_valid'][:,21:]
     agent_lane_id_target = data['agent']['agent_lane_id_target']
-    print(1)
 
     # 创建文件夹
-    # '/home/vci-4/LK/lk_nuplan/my_planner/scenario_pngs'
     save_path = f'/home/vci-4/LK/lk_nuplan/my_planner/scenario_pngs/{scenario_name[0]}/{scenario_name[1]}/{scenario_name[2]}'
     # 如果文件夹不存在，则创建
     pathlib.Path(save_path).mkdir(parents=True, exist_ok=True)
 
     map_data = data['map']
+    polygon_connect_matrix = map_data['polygon_connect_matrix']  # (N, N)
+    polygon_connect_cost_matrix = map_data['polygon_connect_cost_matrix']
     positions = map_data['point_position_raw']  # (N, 3, 21, 2)
     polygon_type = map_data['polygon_type']  # (N,)
     polygon_on_route = map_data['polygon_on_route']  # (N,)
@@ -53,126 +53,29 @@ def plot_scenarios(data,scenario_name):
     polygon_on_route_id = map_data['polygon_road_lane_id'][polygon_on_route]
     # target_lane_matrix与polygon_on_route_id一一对应，提前建立lane_id到权重的映射
     lane_id_to_target_weight: Dict[Union[int, str], float] = {}
-    # if target_lane_matrix.size:
-    #     target_array = np.atleast_2d(np.asarray(target_lane_matrix))
-    #     flattened_target = target_array[0].reshape(-1)
-    #     for lane_idx, lane_id in enumerate(polygon_on_route_id):
-    #         if lane_idx < flattened_target.size:
-    #             lane_id_to_target_weight[lane_id] = flattened_target[lane_idx]
-    agent =39
-    for t in range(101):
-        fig, ax = plt.subplots(figsize=(50, 50))
-        now_lane = data['agent']['lane_id'][agent][t]
-        now_block = data['agent']['roadblock_id'][agent][t]
-        # plot map
-        N = positions.shape[0]
-        print('正在绘制场景:', scenario_name, '时间步:', t, '多边形数量:', N)
-        for i in range(N):
-            road_lane_id = map_data['polygon_road_lane_id'][i]
-            if road_lane_id == 0:
-                cand_lane = False
-            else:
-                lane_idx = dict_all_lane_id[road_lane_id]
-                cand_lane = cand_mask[agent,t,lane_idx]
-            polygon_points = np.vstack([positions[i,1,:,:], positions[i,2,:,:][::-1]])
-            ax.plot(positions[i,0,:,0], positions[i,0,:,1], label='Ego',linestyle='dashed',color='grey')
+    N = positions.shape[0]
+    start_lane = 0
+    polygon_connect_cost_matrix_i = polygon_connect_cost_matrix[start_lane]
+    fig, ax = plt.subplots(figsize=(50, 50))
+    cost_color_map: Dict[Union[int, float], tuple] = {}
 
-            if cand_lane:
-                color = 'orange'
-            else:
-                color = 'lightblue'
-            if polygon_type[i] == 3:
-                color = 'cyan'
+    for i in range(N):
 
-            # if polygon_type[i] == 0:
-            # elif polygon_type[i] == 2:
-            #     color = 'lightsteelblue'
-            # elif polygon_type[i] == 1:
-            #     color = 'cyan'
-            # target_val = lane_id_to_target_weight.get(road_lane_id)
-            # if target_val is not None and target_val > 0:
-            #     val = float(np.clip(target_val, 0.0, 1.0))
-            #     color = plt.cm.get_cmap('Greens')(0.2 + 0.8 * val)
-            # polygon_road_block_id_i = polygon_road_block_id[i]
-            # 绘制同一road_block_id的多边形使用相同颜色
-            # color = road_block_id_color[polygon_road_block_id_i]
-            # if polygon_on_route[i] == 1:
-            #     color = 'yellow'
-            if road_lane_id == int(now_lane) and road_lane_id != 0:
-                color = 'green'
-            ax.fill(polygon_points[:,0], polygon_points[:,1],
-                     color=color, alpha=0.5,edgecolor='black',linewidth=2)
+        road_lane_id = map_data['polygon_road_lane_id'][i]
+        lane_idx = dict_all_lane_id[road_lane_id]
+        cost_value = float(polygon_connect_cost_matrix_i[lane_idx])
+        polygon_points = np.vstack([positions[i, 1, :, :], positions[i, 2, :, :][::-1]])
+        if i == start_lane:
+            ax.plot(positions[i, 0, :, 0], positions[i, 0, :, 1], label='Ego', linestyle='-', color='black', linewidth=3)
+        ax.plot(positions[i, 0, :, 0], positions[i, 0, :, 1], label='Ego', linestyle='dashed', color='grey')
 
-        # plot ego car
-        agent_data = data['agent']
-        ego_parameters = get_pacifica_parameters()
-        rear_x  = agent_data['position'][0,t,0]
-        rear_y  = agent_data['position'][0,t,1]
-        offset = ego_parameters.rear_axle_to_center
-        L = agent_data['shape'][0,t,1]
-        W = agent_data['shape'][0,t,0]
-        theta = agent_data['heading'][0,t]
-        # 计算车辆中心
-        cx = rear_x + offset * np.cos(theta)
-        cy = rear_y + offset * np.sin(theta)
-        # 局部坐标系下的矩形顶点 (逆时针)
-        local_corners = np.array([
-            [L / 2, W / 2],
-            [L / 2, -W / 2],
-            [-L / 2, -W / 2],
-            [-L / 2, W / 2]
-        ])
-        # 旋转矩阵
-        R = np.array([
-            [np.cos(theta), -np.sin(theta)],
-            [np.sin(theta), np.cos(theta)]
-        ])
-        # 全局坐标
-        global_corners = (local_corners @ R.T) + np.array([cx, cy])
-        # 绘制矩形
-        ax.fill(global_corners[:, 0], global_corners[:, 1],
-                facecolor='red', edgecolor='k', alpha=0.5, linewidth=2)
+        base_color = cost_color_map.setdefault(cost_value, (random.random(), random.random(), random.random()))
 
-        # 绘制其他车辆
-        num_agents = agent_data['position'].shape[0]
-        for i in range(1, num_agents):
-            if not agent_data['valid_mask'][i,t]:
-                continue
-
-            agent_block = agent_data['roadblock_id'][i,t]
-            # color = road_block_id_color[agent_block]
-            rear_x  = agent_data['position'][i,t,0]
-            rear_y  = agent_data['position'][i,t,1]
-            L = agent_data['shape'][i,t,1]
-            W = agent_data['shape'][i,t,0]
-            theta = agent_data['heading'][i,t]
-            # 局部坐标系下的矩形顶点 (逆时针)
-            local_corners = np.array([
-                [L / 2, W / 2],
-                [L / 2, -W / 2],
-                [-L / 2, -W / 2],
-                [-L / 2, W / 2]
-            ])
-            # 旋转矩阵
-            R = np.array([
-                [np.cos(theta), -np.sin(theta)],
-                [np.sin(theta), np.cos(theta)]
-            ])
-            # 全局坐标
-            global_corners = (local_corners @ R.T) + np.array([rear_x, rear_y])
-            if agent_data['in_route_block'][i,t]:
-                color = 'gold'
-            else:
-                color = 'grey'
-            if i == agent:
-                color = 'blue'
-            # 绘制矩形
-            ax.fill(global_corners[:, 0], global_corners[:, 1],
-                    facecolor=color, edgecolor='k', alpha=0.5, linewidth=2)
-        ax.axis('equal')
-        plt.savefig(f'{save_path}/{t:03d}.png')
-        plt.close()
-
+        ax.fill(polygon_points[:, 0], polygon_points[:, 1],
+                color=base_color, alpha=0.5, edgecolor='black', linewidth=2)
+    ax.axis('equal')
+    plt.savefig(f'{save_path}/{1}.png')
+    plt.close()
 
 
 def build_scenarios_from_config(
@@ -234,8 +137,8 @@ def main(cfg: DictConfig):
     for file_name in file_names:
         file_token = file_name.split('/')[-2]
         print(file_token)
-        if not file_token=="ecc632f0d9805f47":
-            continue
+        # if not file_token=="ecc632f0d9805f47":
+        #     continue
         # if j <=6:
         #     j += 1
         #     continue
@@ -243,8 +146,8 @@ def main(cfg: DictConfig):
         feature = storing_mechanism.load_computed_feature_from_folder(pathlib.Path(file_name), feature_builders.get_feature_type())
         plot_scenarios(feature.data,scenario_name)
         j += 1
-        # if j == 10:
-        #     break
+        if j == 10:
+            break
 
 
 if __name__ == '__main__':

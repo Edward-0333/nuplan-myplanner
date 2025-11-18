@@ -1,5 +1,6 @@
 import numpy as np
 from nuplan.common.maps.maps_datatypes import SemanticMapLayer
+import networkx as nx
 
 
 def find_candidate_lanes(data: dict, map_api, hist_steps):
@@ -13,13 +14,22 @@ def find_candidate_lanes(data: dict, map_api, hist_steps):
     dict_all_lane_id = {int(lid): idx for idx, lid in enumerate(all_lane_id) if int(lid) > 0}
     target_roadblock_id = data['agent']['roadblock_id']#[:,hist_steps:]
     target_lane_id = data['agent']['lane_id']#[:,hist_steps:]
+    polygon_type = data['map']['polygon_type']
     assert len(dict_all_lane_id.keys())<= K, f"too many lanes in the scene! > {K}"
     for i in range(N):
         for t in range(T):
-            if target_roadblock_id[i][t] == 0 or target_roadblock_id[i][t] == -1:
+            if target_lane_id[i][t] == 0 or target_lane_id[i][t] == -1:
                 continue
-            roadblock_id = str(target_roadblock_id[i][t])
 
+            if target_roadblock_id[i][t] == -1:
+                lane_id = int(target_lane_id[i][t])
+                lane_idx = dict_all_lane_id[lane_id]
+                lane_type = polygon_type[lane_idx]
+                if lane_type == 3:
+                    cand_valid[i, t, lane_idx] = True
+                continue
+
+            roadblock_id = str(target_roadblock_id[i][t])
             block = map_api.get_map_object(roadblock_id, SemanticMapLayer.ROADBLOCK)
             block = block or map_api.get_map_object(
                 roadblock_id, SemanticMapLayer.ROADBLOCK_CONNECTOR
@@ -196,3 +206,67 @@ def filter_on_route_map(data):
     route_map['valid_mask'] = np.ones((tl_status.shape[0], route_lane_point_position.shape[2]), dtype=bool)
 
     return route_map
+
+
+def construct_lane_graph(data, map_api):
+    polygon_road_lane_id = data['map']['polygon_road_lane_id']
+    dict_all_lane_id = data['agent']['dict_all_lane_id']
+    lane_types = data['map']['polygon_type']
+    # 构建车道间的邻接矩阵
+    lane_connect_matrix = np.full((len(polygon_road_lane_id), len(polygon_road_lane_id), ), 0, dtype=np.int64)
+    for lane_id in polygon_road_lane_id:
+
+        idx = dict_all_lane_id[lane_id]
+        lane_type = lane_types[idx]
+        lane_connect_matrix[idx, idx] = 1
+        if lane_type == 0 or lane_type == 1:
+            lane = map_api.get_map_object(str(lane_id), SemanticMapLayer.LANE)
+            lane = lane or map_api.get_map_object(str(lane_id), SemanticMapLayer.LANE_CONNECTOR)
+            for conn in lane.incoming_edges + lane.outgoing_edges:
+                if conn is None:
+                    continue
+                conn_id = int(conn.id)
+                if conn_id not in dict_all_lane_id:
+                    continue
+                conn_idx = dict_all_lane_id[conn_id]
+                lane_connect_matrix[idx, conn_idx] = 1
+                lane_connect_matrix[conn_idx, idx] = 1
+
+            for left_right in lane.adjacent_edges:
+                if left_right is None:
+                    continue
+                conn_id = int(left_right.id)
+                if conn_id not in dict_all_lane_id:
+                    continue
+                conn_idx = dict_all_lane_id[conn_id]
+                lane_connect_matrix[idx, conn_idx] = 1
+                lane_connect_matrix[conn_idx, idx] = 1
+        elif lane_type == 2:
+            continue
+        elif lane_type == 3:
+            # lane = map_api.get_map_object(lane_id, SemanticMapLayer.CARPARK_AREA)
+            continue
+
+
+    # 创建一个图对象
+    G = nx.from_numpy_array(lane_connect_matrix)
+
+    # 计算最短路径代价矩阵
+    # 使用网络x的floyd_warshall算法计算所有节点对之间的最短路径
+    shortest_paths = dict(nx.all_pairs_shortest_path_length(G))
+
+    # 初始化转移代价矩阵
+    num_nodes = lane_connect_matrix.shape[0]
+    D = np.zeros((num_nodes, num_nodes))
+
+    # 设置转移代价
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            if i != j:  # 如果是不同的节点
+                if j in shortest_paths[i]:
+                    # 设置代价为最短路径的长度
+                    D[i][j] = shortest_paths[i][j]
+                else:
+                    # 如果两个节点不连通，可以设定一个大的代价（例如：inf）
+                    D[i][j] = 999
+    return lane_connect_matrix, D

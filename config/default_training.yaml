@@ -12,6 +12,7 @@ defaults:
   - default_experiment
   - default_common
 
+
   # Trainer and callbacks
   - lightning: default_lightning
   - callbacks: default_callbacks
@@ -35,7 +36,7 @@ defaults:
 
   - training: train_tt
   - override scenario_builder: nuplan_mini
-  - override worker: ray_distributed  #sequential, ray_distributed
+  - override worker: sequential  #sequential, ray_distributed
   - override training_metric:
         - avg_displacement_error
         - avg_heading_error
@@ -54,7 +55,7 @@ cache:
 #  max_workers: 32
 # Mandatory parameters
 py_func: train                                           # Function to be run inside main (can be "train", "test", "cache")
-epochs: 25
+epochs: 35
 warmup_epochs: 3
 lr: 1e-3
 weight_decay: 0.0001

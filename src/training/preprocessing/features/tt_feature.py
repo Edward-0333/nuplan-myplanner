@@ -12,7 +12,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from src.utils.utils import to_device, to_numpy, to_tensor
 from src.training.preprocessing.features.feature_utils import filter_candidate_lane_map
-from src.training.preprocessing.features.feature_utils import find_candidate_lanes, test_loss
+from src.training.preprocessing.features.feature_utils import find_candidate_lanes, test_loss, construct_lane_graph
 import torch.nn.functional as F
 
 @dataclass
@@ -96,6 +96,26 @@ class TTFeature(AbstractModelFeature):
                                 mode='constant',
                                 value=False
                             )
+                if 'polygon_connect_matrix' in feature_list[0].data[key]:
+                    lane_cand_valid_shape = [f.data[key]['polygon_connect_matrix'].shape[-1] for f in feature_list]
+                    max_len = max(lane_cand_valid_shape)
+                    for f in feature_list:
+                        cur_len = f.data[key]['polygon_connect_matrix'].shape[-1]
+                        if cur_len < max_len:
+                            pad_size = (0, max_len - cur_len, 0, max_len - cur_len)  # pad后两个维度（右侧和下方）
+                            f.data[key]['polygon_connect_matrix'] = F.pad(
+                                f.data[key]['polygon_connect_matrix'],
+                                pad_size,
+                                mode='constant',
+                                value=0
+                            )
+                            f.data[key]['polygon_connect_cost_matrix'] = F.pad(
+                                f.data[key]['polygon_connect_cost_matrix'],
+                                pad_size,
+                                mode='constant',
+                                value=float(999)
+                            )
+
                 batch_data[key] = {
                     k: pad_sequence(
                         [f.data[key][k] for f in feature_list], batch_first=True
@@ -287,6 +307,7 @@ class TTFeature(AbstractModelFeature):
             data["angle"] = center_angle
 
             data['agent']['lane_cand_valid'], data['agent']['dict_all_lane_id']=find_candidate_lanes(data, map_api, hist_steps)
+
             # filter_candidate_lane_map(data)
             dict_all_lane_id = data['agent']['dict_all_lane_id']
             polygon_road_lane_id = data['map']['polygon_road_lane_id']
@@ -326,6 +347,8 @@ class TTFeature(AbstractModelFeature):
                 assert not ttt[ii][valid_targets[ii]], "lane_cand_mask must be False for ground-truth target_lane indices"
 
             data['agent']['agent_lane_id_target'] = agent_lane_id_target[:, hist_steps:]
+            # 构建邻接矩阵和转移矩阵
+            data['map']['polygon_connect_matrix'], data['map']['polygon_connect_cost_matrix'] = construct_lane_graph(data,map_api)
             # 删除data['map']['dict_all_lane_id']
             if "dict_all_lane_id" in data["agent"]:
                 del data["agent"]["dict_all_lane_id"]
@@ -333,3 +356,4 @@ class TTFeature(AbstractModelFeature):
         # data['route_map'] = filter_on_route_map(data)
         # test_loss(data)
         return TTFeature(data=data)
+

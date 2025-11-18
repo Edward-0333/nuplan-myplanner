@@ -24,7 +24,7 @@ imitation_planner:
     use_ego_history: false
     state_attn_encoder: true
     use_hidden_proj: false
-    use_agent_lane_temporal_matching: false
+    use_agent_lane_temporal_matching: true
 
     feature_builder:
       _target_: src.training.preprocessing.feature_builders.tt_feature_builder.TTFeatureBuilder
@@ -36,4 +36,4 @@ imitation_planner:
       max_agents: 48
       build_reference_line: true
 
-  planner_ckpt: /home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp/exp/training/tt/2025.11.08.08.57.04/checkpoints/epoch=4-val_minFDE=0.000.ckpt
+  planner_ckpt: /home/vci-4/LK/lk_nuplan/nuplan-devkit/nuplan/exp/exp/training/tt/2025.11.16.20.22.46/checkpoints/last.ckpt
